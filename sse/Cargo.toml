@@ -1,0 +1,23 @@
+[package]
+name = "sse"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "sse"
+
+[[bin]]
+name = "sse-server"
+path = "src/main.rs"
+
+[dependencies]
+actix-web = "4.11.0"
+actix-web-lab = "0.24.3"
+tokio.workspace = true
+serde.workspace = true
+futures-util = "0.3.31"
+async-stream = "0.3.6"
+env_logger.workspace = true
+log.workspace = true
+dotenv = { workspace = true }
+anyhow = { workspace = true }

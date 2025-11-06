@@ -1,0 +1,30 @@
+[package]
+name = "client"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "client"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true, features = ["derive"] }
+serde_yaml = "0.9.34"
+log = { workspace = true }
+env_logger = { workspace = true }
+anyhow = { workspace = true }
+futures = { workspace = true }
+tonic = { workspace = true }
+uuid = { version = "1.0", features = ["v4"] }
+
+# Ethereum related
+alloy = "1.0.34"
+alloy-rlp = "0.3.4"
+hex = "0.4.3"
+k256 = { version = "0.13", features = ["ecdsa", "ecdsa-core"] }
+
+# Internal dependencies
+participant = { path = "../participant" }
+proto = { path = "../proto" }
+alloy-consensus = "1.0.42"

@@ -1,0 +1,29 @@
+[package]
+name = "participant"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "participant"
+
+[dependencies]
+anyhow.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+env_logger.workspace = true
+log.workspace = true
+surf = "2.3.2"
+async-sse = "5.1.0"
+round-based = "0.4.1"
+cggmp21 = { version = "0.6.2", features = ["curve-secp256k1", "hd-wallet", "hd-slip10"] }
+rand = "0.8.0"
+sha2 = "0.10.9"
+thiserror.workspace = true
+generic-ec = "0.4.5"
+tonic = { workspace = true }
+proto = { path = "../proto" }
+dotenv = { workspace = true }
+alloy = "1.0.34"
+secp256k1 = { version = "0.26", features = ["global-context", "bitcoin-hashes"] }

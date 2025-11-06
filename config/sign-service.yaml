@@ -1,0 +1,24 @@
+# Sign Service Configuration
+server:
+  # SSE Server configuration
+  sse:
+    host: "127.0.0.1"
+    port: 8080
+    cors_origins: ["http://localhost:3000", "http://127.0.0.1:3000"]
+  
+  # Participant Server configuration  
+  participant:
+    host: "127.0.0.1"
+    port: 50051
+    index: 0  # Which participant this service represents (0, 1, or 2)
+
+# Logging configuration
+logging:
+  level: "info"
+  format: "json"  # or "text"
+
+# MPC configuration
+mpc:
+  threshold: 2
+  total_participants: 3
+  key_share_file: "key_share_1.json"  # Will be determined by participant.index

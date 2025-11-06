@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package mpc;
+
+service Participant {
+    rpc SignTx (SignMessage) returns (SignatureMessage);
+}
+
+enum Chain {
+    Ethereum = 0;
+    Bitcoin = 1;
+}
+
+message SignMessage {
+    int32 tx_id = 1;
+    bytes execution_id = 2;
+    Chain chain = 3;
+    bytes data = 4;
+    repeated uint32 derivation_path = 5;
+}
+
+message SignatureMessage {
+    bytes r = 1;
+    bytes s = 2;
+    uint32 v = 3;
+}
+
+message Empty {}
