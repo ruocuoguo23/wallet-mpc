@@ -1,0 +1,43 @@
+namespace mpc_client {
+    [Throws=MpcError]
+    MpcSigner create_mpc_signer(string config_path);
+};
+
+[Error]
+interface MpcError {
+    ConfigError(string msg);
+    NetworkError(string msg);
+    SigningError(string msg);
+    InitializationError(string msg);
+};
+
+dictionary SignatureResult {
+    sequence<u8> r;
+    sequence<u8> s;
+    u32 v;
+};
+
+dictionary MpcConfig {
+    string local_participant_host;
+    u16 local_participant_port;
+    u16 local_participant_index;
+    string key_share_file;
+    string sign_service_host;
+    u16 sign_service_port;
+    string sse_host;
+    u16 sse_port;
+    u16 sign_service_index;
+    u16 threshold;
+    u16 total_participants;
+    string log_level;
+};
+
+interface MpcSigner {
+    [Throws=MpcError]
+    constructor(MpcConfig config);
+    [Throws=MpcError]
+    void initialize();
+    [Throws=MpcError]
+    SignatureResult sign_data(sequence<u8> data, sequence<u32>? derivation_path);
+    void shutdown();
+};

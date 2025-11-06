@@ -1,13 +1,18 @@
 [package]
 name = "client"
 version.workspace = true
-edition.workspace = true
+edition = "2021" # UniFFI 还不支持 2024 edition，使用 2021
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+name = "mpc_client"
 
 [[bin]]
 name = "client"
 path = "src/main.rs"
 
 [dependencies]
+uniffi = { workspace = true, features = ["tokio", "cli", "scaffolding-ffi-buffer-fns"] }
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true, features = ["derive"] }
 serde_yaml = "0.9.34"
@@ -17,6 +22,7 @@ anyhow = { workspace = true }
 futures = { workspace = true }
 tonic = { workspace = true }
 uuid = { version = "1.0", features = ["v4"] }
+thiserror = "1.0"
 
 # Ethereum related
 alloy = "1.0.34"
@@ -28,3 +34,6 @@ k256 = { version = "0.13", features = ["ecdsa", "ecdsa-core"] }
 participant = { path = "../participant" }
 proto = { path = "../proto" }
 alloy-consensus = "1.0.42"
+
+[build-dependencies]
+uniffi = { workspace = true, features = ["build"] }

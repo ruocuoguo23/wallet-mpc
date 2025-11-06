@@ -1,17 +1,16 @@
 [workspace]
 members = [
-    "participant",
-    "sse", 
     "client",
     "sign-service",
-    "proto"
+    "participant",
+    "proto",
+    "sse",
 ]
 resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
-edition = "2024"
-authors = ["wallet-mpc team"]
+edition = "2021"  # 使用 2021 edition 以兼容 UniFFI
 
 [workspace.dependencies]
 dotenv = "0.15.0"
@@ -26,3 +25,4 @@ tonic = "0.14.2"
 prost = "0.14.1"
 futures = "0.3.31"
 thiserror = "2.0.16"
+uniffi = "0.28.0"
