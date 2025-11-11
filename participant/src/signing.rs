@@ -14,19 +14,17 @@ use cggmp21::signing::msg::Msg;
 use sha2::Sha256;
 use std::error::Error;
 use alloy::hex;
-use crate::external_verifier;
-use crate::external_verifier::ExternalVerifier;
 
 /// Parameters per each curve that are needed in tests
 pub trait CurveParams: Curve {
     /// Which HD derivation algorithm to use with that curve
     type HdAlgo: cggmp21::hd_wallet::HdWallet<Self>;
-    type ExVerifier: ExternalVerifier<Self>;
+    // type ExVerifier: ExternalVerifier<Self>;
 }
 
 impl CurveParams for cggmp21::supported_curves::Secp256k1 {
     type HdAlgo = cggmp21::hd_wallet::Slip10;
-    type ExVerifier = external_verifier::Bitcoin;
+    // type ExVerifier = external_verifier::Bitcoin;
 }
 
 // impl CurveParams for cggmp24::supported_curves::Secp256r1 {

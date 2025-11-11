@@ -19,7 +19,7 @@ print_colored_text() {
     printf "${color}${text}${NC}"
 }
 
-ios_targets=(aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios)
+ios_targets=(aarch64-apple-ios aarch64-apple-ios-sim)
 
 option_release=false
 option_targets=()
@@ -99,16 +99,48 @@ fi
 build_ios() {
     local target=$1
     echo "Building ${target}..."
-    cargo build ${BUILD_OPTIONS} -p client --target $target
+
+    # 为 iOS 目标设置编译环境
+    local sdk=""
+    local arch=""
+
+    if [[ "$target" == *"-sim" ]]; then
+        sdk="iphonesimulator"
+    else
+        sdk="iphoneos"
+    fi
+
+    if [[ "$target" == "aarch64-"* ]]; then
+        arch="arm64"
+    else
+        arch="x86_64"
+    fi
+
+    # 获取 SDK 路径
+    local sdk_path=$(xcrun --sdk $sdk --show-sdk-path)
+
+    # 设置编译标志
+    export CC="clang"
+    export CFLAGS="-arch $arch -isysroot $sdk_path -mios-version-min=10.0"
+
+    echo "CC=$CC"
+    echo "CFLAGS=$CFLAGS"
+
+    cargo build ${BUILD_OPTIONS} -p mpc-client --target $target
+
+    # 清除环境变量
+    unset CC
+    unset CFLAGS
+
     mkdir -p ${PUBLISH_DIR}/ios/$target
-    cp target/$target/${BUILD_PROFILE}/libclient.a ${PUBLISH_DIR}/ios/$target/
+    cp target/$target/${BUILD_PROFILE}/libmpc_client.a ${PUBLISH_DIR}/ios/$target/
     BUILD_RESULTS+=("${PUBLISH_DIR}/ios/${target}")
-    print_colored_text $GREEN "Building ${target} done"
+    print_colored_text $GREEN "Building ${target} done\n"
 }
 
 # Compile lib
 # desktop target
-cargo build -p client ${BUILD_OPTIONS}
+cargo build -p mpc-client ${BUILD_OPTIONS}
 
 has_ios_target=false
 # iOS
@@ -123,7 +155,7 @@ done
 if [ "$has_ios_target" = true ]; then
     cargo run --features=uniffi/cli --bin uniffi-bindgen \
         generate \
-        --library target/${BUILD_PROFILE}/libclient.dylib \
+        --library target/${BUILD_PROFILE}/libmpc_client.dylib \
         --language swift \
         --out-dir ${PUBLISH_DIR}/ios
 fi
@@ -142,4 +174,55 @@ if [ "$option_archive" = true ]; then
     tar -czvf ${PUBLISH_DIR}/wallet_mpc_ios-${VERSION}.tar.gz publish_libs/ios
     print_colored_text $GREEN "\nArchive done.\n\n"
 fi
+
+# Build for each target
+for target in "${TARGETS[@]}"; do
+    echo "Building for $target..."
+
+    if [ "$option_archive" = true ]; then
+        echo "Archiving $target build..."
+
+        # Determine the correct target directory and library extension
+        if [ "$target" = "universal" ]; then
+            TARGET_DIR="target/release"
+            LIB_EXT="dylib"
+        else
+            TARGET_DIR="target/$target/release"
+            # iOS and simulator targets use static library
+            if [[ "$target" == *"ios"* ]] || [[ "$target" == *"darwin"* ]]; then
+                if [[ "$target" == *"ios"* ]]; then
+                    LIB_EXT="a"
+                else
+                    LIB_EXT="dylib"
+                fi
+            else
+                LIB_EXT="so"
+            fi
+        fi
+
+        # Find the library file
+        if [ "$LIB_EXT" = "a" ]; then
+            LIB_FILE="$TARGET_DIR/libmpc_client.a"
+        else
+            LIB_FILE="$TARGET_DIR/libmpc_client.$LIB_EXT"
+        fi
+
+        if [ ! -f "$LIB_FILE" ]; then
+            echo "Error: Library file not found at $LIB_FILE"
+            exit 1
+        fi
+
+        # Create archive directory
+        ARCHIVE_DIR="archives/$target"
+        mkdir -p "$ARCHIVE_DIR"
+
+        # Copy library and header
+        cp "$LIB_FILE" "$ARCHIVE_DIR/"
+        if [ -f "target/mpc_client.h" ]; then
+            cp "target/mpc_client.h" "$ARCHIVE_DIR/"
+        fi
+
+        echo "Archived to $ARCHIVE_DIR"
+    fi
+done
 

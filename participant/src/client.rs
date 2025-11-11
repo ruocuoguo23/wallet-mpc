@@ -1,4 +1,5 @@
-use std::convert::TryInto;
+use tokio_util::compat::TokioAsyncReadCompatExt;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use futures::{Sink, Stream, StreamExt, TryStreamExt};
@@ -6,6 +7,10 @@ use log::{debug, error, info};
 use round_based::{Incoming, Outgoing};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
+use tokio_util::io::StreamReader;
+
+#[allow(unused_imports)]
+use tokio_util::compat::FuturesAsyncReadCompatExt;
 
 #[derive(Deserialize, Debug)]
 #[allow(dead_code)]
@@ -52,77 +57,94 @@ pub enum TransportError {
 
 #[derive(Clone, Debug)]
 pub struct Client {
-    client: surf::Client,
+    client: reqwest::Client,
+    base_url: String,
 }
 
 impl Client {
-    pub fn new(address: surf::Url) -> Result<Self> {
+    pub fn new(address: reqwest::Url) -> Result<Self> {
         info!("Creating new client for address: {}", address);
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::default()) // No timeout for long-running SSE connections
+            .build()
+            .context("Failed to build HTTP client")?;
+
         Ok(Self {
-            client: surf::Config::new()
-                .set_base_url(address)
-                .set_timeout(None)
-                .try_into()?,
+            client,
+            base_url: address.to_string(),
         })
     }
 
     pub fn room(&self, room: &str) -> Room {
-        Room::new(self.client.clone(), room.to_string())
+        Room::new(self.client.clone(), self.base_url.clone(), room.to_string())
     }
 }
 
 #[derive(Clone)]
 pub struct Room {
-    client: surf::Client,
+    client: reqwest::Client,
+    base_url: String,
     room: String,
 }
 
 impl Room {
-    pub fn new(client: surf::Client, room: String) -> Self {
+    pub fn new(client: reqwest::Client, base_url: String, room: String) -> Self {
         Room {
             client,
+            base_url,
             room: format!("rooms/{}", room),
         }
     }
 
     fn endpoint(&self, endpoint: &str) -> String {
-        format!("{}/{}", self.room, endpoint)
+        format!("{}/{}/{}", self.base_url.trim_end_matches('/'), self.room, endpoint)
     }
 
     #[allow(dead_code)]
     async fn issue_index(&self) -> Result<u16, TransportError> {
         let endpoint = self.endpoint("issue_unique_idx");
         debug!("Requesting unique index from endpoint: {}", endpoint);
+
         let response = self
             .client
-            .post(endpoint)
-            .recv_json::<IssuedUniqueIdx>()
+            .post(&endpoint)
+            .send()
             .await
             .map_err(|e| {
-                let err =
-                    TransportError::Http(format!("Failed to issue index: {}", e.into_inner()));
-                error!("Failed to issue index: {}", err);
+                let err = TransportError::Http(format!("Failed to issue index: {}", e));
+                error!("{}", err);
                 err
             })?;
-        info!("Issued unique index: {}", response.unique_idx);
-        Ok(response.unique_idx)
+
+        let issued_idx = response
+            .json::<IssuedUniqueIdx>()
+            .await
+            .map_err(|e| {
+                let err = TransportError::Http(format!("Failed to parse index response: {}", e));
+                error!("{}", err);
+                err
+            })?;
+
+        info!("Issued unique index: {}", issued_idx.unique_idx);
+        Ok(issued_idx.unique_idx)
     }
 
     async fn broadcast(&self, message: &str) -> Result<(), TransportError> {
         let endpoint = self.endpoint("broadcast");
         debug!("Broadcasting message to endpoint: {}", endpoint);
+
         self.client
-            .post(endpoint)
-            .body(message)
+            .post(&endpoint)
+            .body(message.to_string())
+            .send()
             .await
             .map_err(|e| {
-                let err = TransportError::Http(format!(
-                    "Failed to broadcast message: {}",
-                    e.into_inner()
-                ));
-                error!("Failed to broadcast message: {}", err);
+                let err = TransportError::Http(format!("Failed to broadcast message: {}", e));
+                error!("{}", err);
                 err
             })?;
+
         debug!("Message broadcast successful");
         Ok(())
     }
@@ -135,20 +157,40 @@ impl Room {
     > {
         let endpoint = self.endpoint("subscribe");
         debug!("Subscribing to SSE stream at endpoint: {}", endpoint);
-        let response = self.client.get(endpoint).await.map_err(|e| {
-            let err =
-                TransportError::Http(format!("Failed to subscribe to stream: {}", e.into_inner()));
-            error!("Failed to subscribe to stream: {}", err);
-            err
-        })?;
-        let events = async_sse::decode(response);
+
+        let response = self.client
+            .get(&endpoint)
+            .send()
+            .await
+            .map_err(|e| {
+                let err = TransportError::Http(format!("Failed to subscribe to stream: {}", e));
+                error!("{}", err);
+                err
+            })?;
+
+        // Convert the response body into a byte stream
+        let byte_stream = response.bytes_stream();
+
+        // Convert Stream<Item = Result<Bytes, Error>> to AsyncRead
+        let byte_stream_mapped = byte_stream.map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::Other, e)
+        });
+
+        let stream_reader = StreamReader::new(byte_stream_mapped);
+        let async_read = stream_reader.compat();
+
+        // Use async-sse to decode SSE events
+        let events = async_sse::decode(async_read);
+
         let stream = events.filter_map(|msg| {
             Box::pin(async {
                 match msg {
-                    Ok(async_sse::Event::Message(msg)) => Some(
-                        String::from_utf8(msg.into_bytes())
-                            .context("Received invalid UTF-8 in SSE message"),
-                    ),
+                    Ok(async_sse::Event::Message(msg)) => {
+                        Some(
+                            String::from_utf8(msg.into_bytes())
+                                .context("Received invalid UTF-8 in SSE message")
+                        )
+                    }
                     Ok(_) => {
                         // ignore other types of SSE events (like comments, etc.)
                         None
@@ -156,7 +198,7 @@ impl Room {
                     Err(e) => {
                         let err = anyhow::Error::new(TransportError::Sse(format!(
                             "SSE stream error: {}",
-                            e.into_inner()
+                            e
                         )));
                         error!("SSE stream error: {}", err);
                         Some(Err(err))
@@ -164,6 +206,7 @@ impl Room {
                 }
             })
         });
+
         Ok(Box::pin(stream))
     }
 
@@ -182,6 +225,7 @@ impl Room {
 
         // Clone what we need for the closures
         let outgoing_client = self.client.clone();
+        let outgoing_room = self.clone();
 
         // Construct channel of incoming messages
         let incoming = self
@@ -225,7 +269,7 @@ impl Room {
         // Construct channel of outgoing messages
         let outgoing =
             futures::sink::unfold(outgoing_client, move |client, message: Outgoing<M>| {
-                let room = self.clone();
+                let room = outgoing_room.clone();
                 Box::pin(async move {
                     let msg = Msg {
                         sender: index,

@@ -1,12 +1,16 @@
 [workspace]
 members = [
     "client",
+    "mpc-client",
     "sign-service",
     "participant",
     "proto",
     "sse",
 ]
 resolver = "2"
+
+[patch.crates-io]
+gmp-mpfr-sys = { path = "./vendor/gmp-mpfr-sys" }
 
 [workspace.package]
 version = "0.1.0"

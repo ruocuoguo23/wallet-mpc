@@ -1,7 +1,6 @@
 mod client;
 mod config;
 mod signing;
-mod external_verifier;
 
 use std::error::Error;
 use log::info;
@@ -12,7 +11,7 @@ use cggmp21::supported_curves::Secp256k1;
 use proto::mpc::participant_server::{Participant, ParticipantServer as GrpcParticipantServer};
 use proto::mpc::{Chain, SignMessage, SignatureMessage};
 use tonic::{Request, Response, Status, transport::Server};
-use surf::Url;
+use reqwest::Url;
 
 pub use client::Client;
 pub use config::{AppConfig, ParticipantConfig, SSEConfig};

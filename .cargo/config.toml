@@ -1,0 +1,11 @@
+[target.aarch64-apple-ios]
+linker = "clang"
+rustflags = [
+    "-C", "link-arg=-mios-version-min=10.0",
+]
+
+[target.aarch64-apple-ios-sim]
+linker = "clang"
+rustflags = [
+    "-C", "link-arg=-mios-simulator-version-min=10.0",
+]

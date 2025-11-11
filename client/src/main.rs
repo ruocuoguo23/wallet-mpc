@@ -1,5 +1,3 @@
-mod signer;
-
 use alloy::primitives::{Address, Bytes, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy_consensus::private::alloy_eips::Encodable2718;
@@ -8,7 +6,7 @@ use anyhow::Result;
 use log::{error, info};
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 
-use signer::Signer;
+use mpc_client::Signer;
 
 /// Parse HD wallet derivation path from string like "m/44'/60'/0'/0/0"
 /// Returns a vector of u32 values where hardened keys have the 0x80000000 bit set
@@ -295,8 +293,8 @@ async fn main() -> Result<()> {
             }
 
             // Convert signature components
-            let r = alloy::primitives::U256::from_be_slice(&signature.r);
-            let s = alloy::primitives::U256::from_be_slice(&signature.s);
+            let r = U256::from_be_slice(&signature.r);
+            let s = U256::from_be_slice(&signature.s);
             
             // Create the signature using alloy_consensus
             // For EIP-1559, parity is the recovery ID directly (0 or 1)
