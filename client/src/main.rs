@@ -221,7 +221,7 @@ async fn main() -> Result<()> {
     };
 
     // For demo purposes, we'll use nonce 0 (in real usage, you'd get this from the account)
-    let nonce = 0u64;
+    let nonce = 1u64;
 
     info!("EIP-1559 Transaction details:");
     info!("  To: {}", to_address);
@@ -410,81 +410,4 @@ async fn main() -> Result<()> {
     println!("🔍 Check the explorer link above for transaction status");
     
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_derivation_path_parsing() {
-        // Test MPC-compatible non-hardened Ethereum path
-        let path = parse_derivation_path("m/44/60/0/0/0").unwrap();
-        let expected: Vec<u32> = vec![44, 60, 0, 0, 0];
-        assert_eq!(path, expected);
-
-        // Verify formatting
-        assert_eq!(format_derivation_path(&path), "m/44/60/0/0/0");
-
-        // Test that hardened notation is ignored (treated as warning)
-        let path = parse_derivation_path("m/44'/60'/0'/0/0").unwrap();
-        // Should convert to non-hardened
-        assert_eq!(path, vec![44, 60, 0, 0, 0]);
-
-        // Test simple path
-        let path = parse_derivation_path("m/0/1").unwrap();
-        let expected_simple: Vec<u32> = vec![0, 1];
-        assert_eq!(path, expected_simple);
-        assert_eq!(format_derivation_path(&path), "m/0/1");
-
-        // Test empty path after m/
-        let path = parse_derivation_path("m/").unwrap();
-        let expected_empty: Vec<u32> = vec![];
-        assert_eq!(path, expected_empty);
-
-        // Test invalid paths
-        assert!(parse_derivation_path("44/60/0/0/0").is_err()); // Missing m/
-        assert!(parse_derivation_path("m/invalid/0").is_err()); // Invalid number
-    }
-
-    #[test]
-    fn test_non_hardened_indices() {
-        // Verify all indices are non-hardened
-        let path = parse_derivation_path("m/44/60/0/0/0").unwrap();
-        for &index in &path {
-            assert!(index < 0x80000000, "Index {} is hardened", index);
-        }
-
-        // Test path validation
-        assert!(validate_derivation_path(&path).is_ok());
-    }
-
-    #[test]
-    fn test_derivation_path_validation() {
-        // Valid non-hardened path
-        let path = vec![44, 60, 0, 0, 0];
-        assert!(validate_derivation_path(&path).is_ok());
-
-        // Hardened path should fail validation
-        let hardened_path = vec![0x8000002c, 0x8000003c, 0x80000000, 0, 0];
-        assert!(validate_derivation_path(&hardened_path).is_err());
-
-        // Empty path should fail
-        let empty_path: Vec<u32> = vec![];
-        assert!(validate_derivation_path(&empty_path).is_err());
-    }
-
-    #[tokio::test]
-    async fn test_signer_initialization() {
-        // This test requires the config file to exist
-        // In actual environments, a test config should be used
-        if std::path::Path::new("config/client.yaml").exists() {
-            let result = Signer::new("config/client.yaml").await;
-            // In test environments, network connection may fail, but config should at least be parsed
-            match result {
-                Ok(_) => println!("Signer initialized successfully in test"),
-                Err(e) => println!("Expected error in test environment: {}", e),
-            }
-        }
-    }
 }

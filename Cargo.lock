@@ -1706,13 +1706,10 @@ dependencies = [
  "alloy",
  "alloy-consensus",
  "anyhow",
- "env_logger",
  "hex",
  "k256",
  "log",
  "mpc-client",
- "serde",
- "serde_yaml",
  "tokio",
 ]
 
@@ -3432,14 +3429,9 @@ dependencies = [
 name = "mpc-client"
 version = "0.1.0"
 dependencies = [
- "alloy",
- "alloy-consensus",
- "alloy-rlp",
  "anyhow",
  "env_logger",
  "futures",
- "hex",
- "k256",
  "log",
  "participant",
  "proto",

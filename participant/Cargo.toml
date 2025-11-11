@@ -14,6 +14,7 @@ serde_json.workspace = true
 tokio.workspace = true
 env_logger.workspace = true
 log.workspace = true
+
 # Replace surf with reqwest using rustls-tls to avoid OpenSSL dependency
 reqwest = { version = "0.12.5", default-features = false, features = ["rustls-tls", "json", "stream"] }
 reqwest-eventsource = "0.6.0"

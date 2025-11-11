@@ -24,16 +24,9 @@ tonic = { workspace = true }
 uuid = { version = "1.0", features = ["v4"] }
 thiserror = "1.0"
 
-# Ethereum related
-alloy = "1.0.34"
-alloy-rlp = "0.3.4"
-hex = "0.4.3"
-k256 = { version = "0.13", features = ["ecdsa", "ecdsa-core"] }
-
 # Internal dependencies
 participant = { path = "../participant" }
 proto = { path = "../proto" }
-alloy-consensus = "1.0.42"
 
 [build-dependencies]
 uniffi = { workspace = true, features = ["build"] }
