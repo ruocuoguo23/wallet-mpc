@@ -10,11 +10,13 @@ path = "src/main.rs"
 [dependencies]
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 serde_yaml = "0.9.34"
 log = { workspace = true }
 env_logger = { workspace = true }
 anyhow = { workspace = true }
 futures = { workspace = true }
+cggmp21 = { version = "0.6.2", features = ["curve-secp256k1", "hd-wallet", "hd-slip10"] }
 
 # Internal dependencies
 sse = { path = "../sse" }

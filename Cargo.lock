@@ -4858,11 +4858,13 @@ name = "sign-service"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cggmp21",
  "env_logger",
  "futures",
  "log",
  "participant",
  "serde",
+ "serde_json",
  "serde_yaml",
  "sse",
  "tokio",

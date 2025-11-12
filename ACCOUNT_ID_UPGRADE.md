@@ -22,20 +22,21 @@ message SignMessage {
 
 ### 2. ParticipantHandler结构变更
 - 将单个 `key_share` 改为 `HashMap<String, KeyShare>` 映射
+- 删除了 `index` 字段，简化结构
 - 使用 `account_id` 作为key来查找对应的`key_share`
 
 ```rust
 pub struct ParticipantHandler {
     client: Client,
-    index: u16,  // 保留默认index用于兼容
     key_shares: HashMap<String, KeyShare<Secp256k1, SecurityLevel128>>,  // account_id -> key_share映射
 }
 ```
 
-### 3. 自动加载多个Key Shares
-- 自动扫描当前目录中的所有 `key_share_*.json` 文件
-- 为每个key_share生成默认的 `account_id` (格式: `account_{index}`)
-- 支持自定义account_id映射（预留扩展接口）
+### 3. 移动端友好的Key Shares管理
+- **主要接口**：`ParticipantHandler::new(client, key_shares)` - 接受预加载的HashMap
+- **iOS友好**：无需依赖文件系统，支持安全存储集成
+- **内存高效**：直接使用传入的HashMap，避免文件I/O
+- **生产就绪**：每个account_id对应预派生的key_share
 
 ### 4. 签名流程优化
 - 通过 `account_id` 查找对应的key_share和index

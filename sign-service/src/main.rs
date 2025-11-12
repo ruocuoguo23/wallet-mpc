@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::fs;
+use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use log::{info, error};
@@ -7,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use tokio::try_join;
 
 use sse::{SseServer, AppConfig as SseAppConfig, SSEConfig};
-use participant::{ParticipantServer, AppConfig as ParticipantAppConfig, ParticipantConfig, SSEConfig as ParticipantSSEConfig};
+use participant::ParticipantServer;
+use cggmp21::KeyShare;
+use cggmp21::security_level::SecurityLevel128;
+use cggmp21::supported_curves::Secp256k1;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct SignServiceConfig {
@@ -67,19 +71,26 @@ impl SignServiceConfig {
         }
     }
 
-    fn to_participant_config(&self) -> ParticipantAppConfig {
-        ParticipantAppConfig {
-            sse: ParticipantSSEConfig {
-                host: self.server.sse.host.clone(),
-                port: self.server.sse.port,
-            },
-            participant: ParticipantConfig {
-                host: self.server.participant.host.clone(),
-                port: self.server.participant.port,
-                index: self.server.participant.index,
-            },
-        }
-    }
+}
+
+/// Load key_share_1.json file with fixed account_id "1"
+fn load_key_share() -> Result<HashMap<String, KeyShare<Secp256k1, SecurityLevel128>>> {
+    let filename = "key_share_1.json";
+    
+    info!("Loading key share from file: {}", filename);
+    let key_share_json = fs::read_to_string(filename)
+        .with_context(|| format!("Failed to read key share file {}", filename))?;
+
+    let key_share: KeyShare<Secp256k1, SecurityLevel128> = serde_json::from_str(&key_share_json)
+        .with_context(|| format!("Key share deserialization failed for {}", filename))?;
+
+    let mut key_shares = HashMap::new();
+    let account_id = "1".to_string(); // Fixed account_id as requested
+    key_shares.insert(account_id.clone(), key_share);
+    
+    info!("✓ Key share loaded successfully with account_id: {}", account_id);
+    
+    Ok(key_shares)
 }
 
 fn setup_logging(config: &LoggingConfig) -> Result<()> {
@@ -106,19 +117,29 @@ fn setup_logging(config: &LoggingConfig) -> Result<()> {
 async fn run_services(config: SignServiceConfig) -> Result<()> {
     info!("Initializing services...");
     
+    // 加载key share (固定使用key_share_1.json和account_id="1")
+    let key_shares = load_key_share()
+        .context("Failed to load key share")?;
+    
     // 创建SSE server
     let sse_config = config.to_sse_config();
     let sse_server = SseServer::new(sse_config);
     info!("SSE Server created - {}:{}", config.server.sse.host, config.server.sse.port);
 
-    // 创建Participant server
-    let participant_config = config.to_participant_config();
-    let participant_server = ParticipantServer::new(participant_config)
-        .map_err(|e| anyhow::anyhow!("Failed to create participant server: {}", e))?;
-    info!("Participant Server created - {}:{} (index: {})", 
+    // 创建Participant server 使用新的接口
+    let sse_url = format!("http://{}:{}", config.server.sse.host, config.server.sse.port);
+    let participant_server = ParticipantServer::new(
+        &sse_url,
+        &config.server.participant.host,
+        config.server.participant.port,
+        key_shares,
+    ).map_err(|e| anyhow::anyhow!("Failed to create participant server: {}", e))?;
+    
+    info!("Participant Server created - {}:{}", 
           config.server.participant.host, 
-          config.server.participant.port,
-          config.server.participant.index);
+          config.server.participant.port);
+    info!("Using SSE server: {}", sse_url);
+    info!("Loaded key share with account_id: 1");
 
     info!("Starting both servers concurrently...");
 
@@ -233,11 +254,11 @@ mpc:
 
         let config: SignServiceConfig = serde_yaml::from_str(yaml_content).unwrap();
         let sse_config = config.to_sse_config();
-        let participant_config = config.to_participant_config();
 
         assert_eq!(sse_config.sse.host, "127.0.0.1");
-        assert_eq!(participant_config.participant.index, 1);
-        assert_eq!(participant_config.sse.host, "127.0.0.1");
-        assert_eq!(participant_config.sse.port, 8080);
+        assert_eq!(sse_config.sse.port, 8080);
+        assert_eq!(config.server.participant.index, 1);
+        assert_eq!(config.server.participant.host, "127.0.0.1");
+        assert_eq!(config.server.participant.port, 50051);
     }
 }

@@ -2,12 +2,11 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use log::{info, error};
-use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 use futures::future::join_all;
 
-use participant::{ParticipantServer, AppConfig as ParticipantAppConfig, ParticipantConfig, SSEConfig};
+use participant::ParticipantServer;
 use proto::mpc::participant_client::ParticipantClient;
 use proto::mpc::{SignMessage, Chain};
 use tonic::transport::Channel;
@@ -46,44 +45,6 @@ pub struct SignatureResult {
     pub v: u32,
 }
 
-/// Internal participant handler that works directly with key share data
-pub struct InternalParticipantHandler {
-    client: participant::Client,
-    index: u16,
-    key_shares: HashMap<String, KeyShare<Secp256k1, SecurityLevel128>>,
-}
-
-impl InternalParticipantHandler {
-    /// Create new handler with key share data instead of files
-    pub fn new(client: participant::Client, index: u16, key_shares_data: Vec<KeyShareData>) -> Result<Self> {
-        info!("Loading participant configuration for index: {}", index);
-        
-        let mut key_shares = HashMap::new();
-        
-        for key_share_data in key_shares_data {
-            // Parse JSON key share data
-            let key_share: KeyShare<Secp256k1, SecurityLevel128> = serde_json::from_str(&key_share_data.key_share_data)
-                .map_err(|e| anyhow::anyhow!("Failed to parse key share for {}: {}", key_share_data.account_id, e))?;
-            
-            key_shares.insert(key_share_data.account_id.clone(), key_share);
-            info!("✓ Key share loaded for account_id: {}", key_share_data.account_id);
-        }
-        
-        if key_shares.is_empty() {
-            return Err(anyhow::anyhow!("No key shares provided"));
-        }
-        
-        info!("✓ Participant {} initialized successfully", index);
-        info!("  - Loaded {} key shares", key_shares.len());
-        info!("  - Available account_ids: {:?}", key_shares.keys().collect::<Vec<_>>());
-        
-        Ok(Self {
-            client,
-            index,
-            key_shares,
-        })
-    }
-}
 
 pub struct Signer {
     config: SignerConfig,
@@ -127,7 +88,7 @@ impl Signer {
         })
     }
 
-    /// Start local participant server with custom ParticipantHandler
+    /// Start local participant server using new ParticipantServer::new method
     pub async fn start_local_participant(&mut self) -> Result<()> {
         info!("Starting local participant server...");
         
@@ -135,46 +96,38 @@ impl Signer {
               self.config.sse_host, 
               self.config.sse_port);
 
-        // Create custom participant server with key share data
-        let server_url = reqwest::Url::parse(&format!("http://{}:{}", self.config.sse_host, self.config.sse_port))?;
-        let client = participant::Client::new(server_url)?;
+        // Convert KeyShareData to HashMap<String, KeyShare> format expected by ParticipantServer
+        let mut key_shares = HashMap::new();
         
-        // Convert KeyShareData to the format expected by InternalParticipantHandler
-        let key_shares_data = self.config.key_shares.iter().map(|ks| KeyShareData {
-            account_id: ks.account_id.clone(),
-            key_share_data: ks.key_share_data.clone(),
-        }).collect();
+        for key_share_data in &self.config.key_shares {
+            // Parse JSON key share data
+            let key_share: KeyShare<Secp256k1, SecurityLevel128> = serde_json::from_str(&key_share_data.key_share_data)
+                .map_err(|e| anyhow::anyhow!("Failed to parse key share for {}: {}", key_share_data.account_id, e))?;
+            
+            key_shares.insert(key_share_data.account_id.clone(), key_share);
+            info!("✓ Key share loaded for account_id: {}", key_share_data.account_id);
+        }
+        
+        if key_shares.is_empty() {
+            return Err(anyhow::anyhow!("No key shares provided"));
+        }
+        
+        info!("✓ Loaded {} key shares", key_shares.len());
+        info!("  - Available account_ids: {:?}", key_shares.keys().collect::<Vec<_>>());
 
-        let internal_handler = InternalParticipantHandler::new(
-            client,
-            self.config.local_participant_index,
-            key_shares_data
-        )?;
+        // Create participant server using new interface with pre-loaded key shares
+        let sse_url = format!("http://{}:{}", self.config.sse_host, self.config.sse_port);
+        let participant_server = ParticipantServer::new(
+            &sse_url,
+            &self.config.local_participant_host,
+            self.config.local_participant_port,
+            key_shares,
+        ).map_err(|e| anyhow::anyhow!("Failed to create local participant server: {}", e))?;
 
-        // For now, we'll create a custom participant server using the existing infrastructure
-        // but with our updated participant handler logic
-        let participant_config = ParticipantAppConfig {
-            sse: SSEConfig {
-                host: self.config.sse_host.clone(),
-                port: self.config.sse_port,
-            },
-            participant: ParticipantConfig {
-                host: self.config.local_participant_host.clone(),
-                port: self.config.local_participant_port,
-                index: self.config.local_participant_index,
-            },
-        };
-
-        let participant_server = ParticipantServer::new(participant_config)
-            .map_err(|e| anyhow::anyhow!("Failed to create local participant server: {}", e))?;
-
-        info!("Local participant server created - {}:{} (index: {})",
+        info!("Local participant server created - {}:{}", 
               self.config.local_participant_host,
-              self.config.local_participant_port,
-              self.config.local_participant_index);
-        info!("Connected to SSE server at {}:{}",
-              self.config.sse_host,
-              self.config.sse_port);
+              self.config.local_participant_port);
+        info!("Connected to SSE server at {}", sse_url);
 
         // Start participant server in background
         let handle = tokio::spawn(async move {
