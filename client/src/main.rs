@@ -1,84 +1,107 @@
+use std::fs;
 use alloy::primitives::{Address, Bytes, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy_consensus::private::alloy_eips::Encodable2718;
 use alloy_consensus::{SignableTransaction, Signed, TxEip1559};
-use anyhow::Result;
+use anyhow::{Result, Context};
 use log::{error, info};
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 
-use mpc_client::Signer;
+use mpc_client::{Signer, SignerConfig, KeyShareData};
 
-/// Parse HD wallet derivation path from string like "m/44'/60'/0'/0/0"
-/// Returns a vector of u32 values where hardened keys have the 0x80000000 bit set
-///
-/// Note: For MPC signing, only non-hardened derivation is supported since
-/// hardened derivation requires access to the private key
-fn parse_derivation_path(path_str: &str) -> Result<Vec<u32>> {
-    if !path_str.starts_with("m/") {
-        return Err(anyhow::anyhow!("Derivation path must start with 'm/'"));
+/// Load client configuration from YAML file and convert to SignerConfig
+fn load_signer_config(config_path: &str) -> Result<SignerConfig> {
+    let yaml_content = fs::read_to_string(config_path)
+        .with_context(|| format!("Failed to read config file: {}", config_path))?;
+    
+    let config: serde_yaml::Value = serde_yaml::from_str(&yaml_content)
+        .with_context(|| "Failed to parse YAML config")?;
+    
+    // Extract configuration values
+    let local_participant = config.get("local_participant")
+        .ok_or_else(|| anyhow::anyhow!("Missing local_participant config"))?;
+    let remote_services = config.get("remote_services")
+        .ok_or_else(|| anyhow::anyhow!("Missing remote_services config"))?;
+    let sign_service = remote_services.get("sign_service")
+        .ok_or_else(|| anyhow::anyhow!("Missing sign_service config"))?;
+    let mpc = config.get("mpc")
+        .ok_or_else(|| anyhow::anyhow!("Missing mpc config"))?;
+    let logging = config.get("logging")
+        .ok_or_else(|| anyhow::anyhow!("Missing logging config"))?;
+
+    // Load key share from file - backward compatibility support
+    let key_share_file = local_participant.get("key_share_file")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Missing local_participant.key_share_file"))?;
+    
+    let participant_index = local_participant.get("index")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| anyhow::anyhow!("Missing local_participant.index"))?
+        as u16;
+    
+    // Read key share file content
+    let key_share_content = fs::read_to_string(key_share_file)
+        .with_context(|| format!("Failed to read key share file: {}", key_share_file))?;
+    
+    // For this demo, we create multiple account_ids from the same key_share
+    // In production, you would have different key_shares for different derivation paths
+    let mut key_shares = Vec::new();
+    
+    // Create multiple account_ids representing different HD wallet addresses
+    // Each would normally have its own pre-derived key_share
+    for i in 0..3 {
+        let account_id = format!("account_{}_{}", participant_index, i);
+        key_shares.push(KeyShareData {
+            account_id: account_id.clone(),
+            key_share_data: key_share_content.clone(), // In production, each would be different
+        });
+        info!("Added account_id: {}", account_id);
     }
     
-    let path_parts = &path_str[2..]; // Remove "m/"
-    if path_parts.is_empty() {
-        return Ok(vec![]);
-    }
-    
-    let mut path = Vec::new();
-    for part in path_parts.split('/') {
-        if part.is_empty() {
-            continue;
-        }
-        
-        let (num_str, is_hardened) = if part.ends_with('\'') || part.ends_with('h') {
-            (&part[..part.len()-1], true)
-        } else {
-            (part, false)
-        };
-        
-        let num: u32 = num_str.parse()
-            .map_err(|_| anyhow::anyhow!("Invalid number in derivation path: {}", num_str))?;
-        
-        if is_hardened {
-            log::warn!("⚠️  Hardened index detected ({}'), will be treated as non-hardened for MPC", num);
-            log::warn!("    MPC signing only supports non-hardened derivation");
-        }
-
-        // For MPC, we only use the raw index value without hardening bit
-        // The MPC library will handle derivation using public key only
-        path.push(num);
-    }
-    
-    Ok(path)
-}
-
-/// Format derivation path for display
-fn format_derivation_path(path: &[u32]) -> String {
-    let mut result = String::from("m");
-    for &component in path {
-        result.push('/');
-        // For MPC, all indices are non-hardened
-        result.push_str(&component.to_string());
-    }
-    result
-}
-
-/// Validate derivation path for MPC usage
-fn validate_derivation_path(path: &[u32]) -> Result<()> {
-    if path.is_empty() {
-        return Err(anyhow::anyhow!("Derivation path cannot be empty"));
-    }
-
-    // Check if all indices are valid non-hardened indices
-    for &index in path {
-        if index >= 0x80000000 {
-            return Err(anyhow::anyhow!(
-                "Hardened index {} not supported in MPC mode. Use non-hardened indices only.",
-                index
-            ));
-        }
-    }
-
-    Ok(())
+    Ok(SignerConfig {
+        local_participant_host: local_participant.get("host")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing local_participant.host"))?
+            .to_string(),
+        local_participant_port: local_participant.get("port")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("Missing local_participant.port"))?
+            as u16,
+        local_participant_index: participant_index,
+        key_shares,
+        sign_service_host: sign_service.get("participant_host")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing sign_service.participant_host"))?
+            .to_string(),
+        sign_service_port: sign_service.get("participant_port")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("Missing sign_service.participant_port"))?
+            as u16,
+        sse_host: sign_service.get("sse_host")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("Missing sign_service.sse_host"))?
+            .to_string(),
+        sse_port: sign_service.get("sse_port")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("Missing sign_service.sse_port"))?
+            as u16,
+        sign_service_index: sign_service.get("index")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("Missing sign_service.index"))?
+            as u16,
+        threshold: mpc.get("threshold")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("Missing mpc.threshold"))?
+            as u16,
+        total_participants: mpc.get("total_participants")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("Missing mpc.total_participants"))?
+            as u16,
+        log_level: logging.get("level")
+            .and_then(|v| v.as_str())
+            .unwrap_or("info")
+            .to_string(),
+    })
 }
 
 /// Recover public key from ECDSA signature
@@ -117,16 +140,25 @@ fn recover_public_key(message_hash: &[u8], r: &[u8], s: &[u8], recovery_id: u32)
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("🚀 Starting MPC Wallet Client with HD Wallet Support");
-    println!("=====================================================");
+    println!("🚀 Starting MPC Wallet Client with Account ID Architecture");
+    println!("=======================================================");
 
     // Get config file path, default to config/client.yaml
     let config_path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "config/client.yaml".to_string());
 
-    // Initialize Signer
-    let mut signer = match Signer::new(&config_path).await {
+    // Load configuration from YAML and create SignerConfig
+    let signer_config = load_signer_config(&config_path)?;
+    
+    // Print available account_ids
+    println!("\n📋 Available Account IDs:");
+    for key_share in &signer_config.key_shares {
+        println!("  - {}", key_share.account_id);
+    }
+
+    // Initialize Signer with SignerConfig
+    let mut signer = match Signer::new(signer_config).await {
         Ok(s) => {
             info!("✅ Signer initialized successfully");
             s
@@ -170,24 +202,14 @@ async fn main() -> Result<()> {
         }
     }
 
-    // HD Wallet derivation path: m/44/60/0/0/0 (Non-hardened for MPC)
-    // Note: MPC only supports non-hardened derivation since it requires public key only
-    let derivation_path_str = "m/44/60/0/0/0";
-    let derivation_path = parse_derivation_path(derivation_path_str)?;
+    // Use account_id instead of derivation path
+    // This represents a pre-derived HD wallet address
+    let account_id = "account_1_0".to_string(); // Using first account for demo
     
-    println!("\n🗝️  Using HD Wallet Derivation (MPC Mode)");
-    println!("Path (string): {}", derivation_path_str);
-    println!("Path (formatted): {}", format_derivation_path(&derivation_path));
-    println!("Path (raw u32): {:?}", derivation_path);
-    println!("Path (hex): {}", derivation_path.iter()
-        .map(|v| format!("0x{:08x}", v))
-        .collect::<Vec<_>>()
-        .join(", "));
-    println!("\n⚠️  Note: MPC signing uses non-hardened derivation only");
-    println!("   Standard path m/44'/60'/0'/0/0 becomes m/44/60/0/0/0 in MPC mode");
-
-    // Validate the path
-    validate_derivation_path(&derivation_path)?;
+    println!("\n🗝️  Using Account ID Architecture");
+    println!("Account ID: {}", account_id);
+    println!("📝 Note: Each account_id represents a pre-derived HD wallet key_share");
+    println!("   No runtime derivation needed - key_shares are pre-generated for each path");
 
     // Create real Ethereum transaction for Base Sepolia
     println!("\n💰 Creating Real Ethereum Transaction (0.0001 ETH)");
@@ -220,7 +242,7 @@ async fn main() -> Result<()> {
         }
     };
 
-    // For demo purposes, we'll use nonce 0 (in real usage, you'd get this from the account)
+    // For demo purposes, we'll use nonce 1 (in real usage, you'd get this from the account)
     let nonce = 1u64;
 
     info!("EIP-1559 Transaction details:");
@@ -229,7 +251,6 @@ async fn main() -> Result<()> {
     info!("  Nonce: {}", nonce);
     info!("  Max Priority Fee: {} Gwei", max_priority_fee_per_gas / 1_000_000_000);
     info!("  Max Fee Per Gas: {} Gwei", max_fee_per_gas / 1_000_000_000);
-    info!("  Max Priority Fee Per Gas: {} Gwei", max_priority_fee_per_gas / 1_000_000_000);
     info!("  Gas Limit: {}", gas_limit);
     info!("  Data: {} bytes", data.len());
     info!("  Network: Base Sepolia (EIP-1559)");
@@ -255,18 +276,19 @@ async fn main() -> Result<()> {
     info!("Transaction signing hash: 0x{}", hex::encode(&signing_hash_bytes));
     info!("Signing hash size: {} bytes", signing_hash_bytes.len());
 
-    println!("\n🔐 Starting MPC Signature Process with HD Wallet (EIP-1559)");
+    println!("\n🔐 Starting MPC Signature Process with Account ID (EIP-1559)");
     println!("- Transaction Type: EIP-1559 (Type 2)");
     println!("- Threshold: 2 out of 3 participants");
     println!("- Participants: Local + Sign-service");
-    println!("- HD Path: {} (non-hardened)", derivation_path_str);
-    println!("- Derivation Mode: Public key only (MPC compatible)");
+    println!("- Account ID: {} (pre-derived key_share)", account_id);
+    println!("- Architecture: Account ID -> Key Share Mapping (no runtime derivation)");
 
-    // Execute MPC signature with HD wallet derivation path
-    match signer.sign(signing_hash_bytes.clone(), Some(derivation_path.clone())).await {
+    // Execute MPC signature with account_id
+    match signer.sign(signing_hash_bytes.clone(), account_id.clone()).await {
         Ok(signature) => {
-            println!("\n✅ HD Wallet Signature Generated Successfully!");
+            println!("\n✅ Account ID Signature Generated Successfully!");
             println!("📝 Signature components:");
+            println!("   Account ID: {}", account_id);
             println!("   R: {} bytes", signature.r.len());
             println!("   S: {} bytes", signature.s.len());
             println!("   Recovery ID: {} (raw)", signature.v);
@@ -284,7 +306,7 @@ async fn main() -> Result<()> {
                     println!("   Uncompressed: 0x{}", uncompressed);
                     
                     // Note: Compare this with the public key displayed during MPC signing process
-                    println!("   💡 Compare above with the HD-derived public key shown in participant logs");
+                    println!("   💡 Compare above with the account key shown in participant logs");
                 }
                 Err(e) => {
                     println!("   ❌ Public Key Recovery Failed: {}", e);
@@ -370,18 +392,15 @@ async fn main() -> Result<()> {
                 }
             }
             
-            info!("HD wallet transaction process completed");
+            info!("Account ID transaction process completed");
         }
         Err(e) => {
-            error!("❌ HD wallet signature failed: {}", e);
-            println!("\n💥 HD Wallet Signature Failed!");
+            error!("❌ Account ID signature failed: {}", e);
+            println!("\n💥 Account ID Signature Failed!");
             println!("Error: {}", e);
             println!("\n🔍 Debugging Information:");
-            println!("- Path (string): {}", derivation_path_str);
-            println!("- Path (formatted): {}", format_derivation_path(&derivation_path));
-            println!("- Path (raw): {:?}", derivation_path);
-            println!("- All indices are non-hardened: {}",
-                     derivation_path.iter().all(|&i| i < 0x80000000));
+            println!("- Account ID: {}", account_id);
+            println!("- Check that the account_id exists in the key_shares mapping");
 
             // Try to cleanup resources
             if let Err(cleanup_err) = signer.stop_local_participant().await {
@@ -400,13 +419,13 @@ async fn main() -> Result<()> {
         println!("✅ Local participant server stopped");
     }
 
-    println!("\n🎯 HD Wallet MPC Client Demo Completed");
-    println!("=====================================");
-    println!("✅ HD wallet derivation: SUCCESS");
+    println!("\n🎯 Account ID MPC Client Demo Completed");
+    println!("=========================================");
+    println!("✅ Account ID architecture: SUCCESS");
     println!("✅ MPC threshold signature: SUCCESS");
     println!("✅ Real blockchain transaction: ATTEMPTED");
     println!("✅ Using alloy_consensus standard EIP-1559");
-    println!("📋 HD Derivation Mode: Non-hardened (MPC compatible)");
+    println!("📋 Architecture: Pre-derived key_shares for each account");
     println!("🔍 Check the explorer link above for transaction status");
     
     Ok(())

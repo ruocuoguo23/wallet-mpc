@@ -3,6 +3,7 @@ mod config;
 mod signing;
 
 use std::error::Error;
+use std::collections::HashMap;
 use log::info;
 
 use cggmp21::KeyShare;
@@ -26,59 +27,76 @@ pub struct ParticipantServer {
 /// Internal participant handler
 pub struct ParticipantHandler {
     client: Client,
-    index: u16,
-    key_share: KeyShare<Secp256k1, SecurityLevel128>,
+    index: u16,  // 保留默认index用于兼容
+    key_shares: HashMap<String, KeyShare<Secp256k1, SecurityLevel128>>,  // account_id -> key_share映射
 }
 
 impl ParticipantHandler {
-    /// Load single key share from file based on participant index
-    fn load_key_share_from_file(index: u16) -> Result<KeyShare<Secp256k1, SecurityLevel128>, Box<dyn Error>> {
+    /// Load all available key shares from files in the current directory
+    fn load_key_shares_from_files() -> Result<HashMap<String, KeyShare<Secp256k1, SecurityLevel128>>, Box<dyn Error>> {
         use std::fs;
+        use std::path::Path;
         
-        // Construct the filename for the specific participant
-        // index 0 -> key_share_1.json, index 1 -> key_share_2.json, etc.
-        let filename = format!("key_share_{}.json", index + 1);
+        let mut key_shares = HashMap::new();
         
-        // 1. Check if the specific key share file exists
-        if !std::path::Path::new(&filename).exists() {
-            return Err(format!("{} file does not exist. Please ensure the key share files are properly distributed.", filename).into());
+        // 扫描当前目录中的所有key_share_*.json文件
+        for i in 1..=10 {  // 假设最多支持10个key_share文件
+            let filename = format!("key_share_{}.json", i);
+            if Path::new(&filename).exists() {
+                info!("   Loading key share from file: {}", filename);
+                
+                let key_share_json = fs::read_to_string(&filename)
+                    .map_err(|e| format!("Failed to read key share file {}: {}", filename, e))?;
+
+                let key_share: KeyShare<Secp256k1, SecurityLevel128> = serde_json::from_str(&key_share_json)
+                    .map_err(|e| format!("Key share deserialization failed for {}: {}", filename, e))?;
+
+                // 使用participant_index作为默认的account_id，同时支持自定义account_id
+                let participant_index = key_share.core.i;
+                let default_account_id = format!("account_{}", participant_index);
+                
+                key_shares.insert(default_account_id.clone(), key_share.clone());
+                
+                // TODO: 在这里可以添加从配置文件或其他地方加载account_id映射的逻辑
+                // 例如读取account_mapping.json文件来建立account_id -> key_share的映射关系
+                
+                info!("   ✓ Key share loaded successfully from {} with account_id: {}", filename, default_account_id);
+            }
         }
         
-        // 2. Load the single key share
-        info!("   Loading key share from file: {}", filename);
-        let key_share_json = fs::read_to_string(&filename)
-            .map_err(|e| format!("Failed to read key share file {}: {}", filename, e))?;
-
-        let key_share: KeyShare<Secp256k1, SecurityLevel128> = serde_json::from_str(&key_share_json)
-            .map_err(|e| format!("Key share deserialization failed for {}: {}", filename, e))?;
-
-        // 3. Verify that the loaded key share matches the expected index
-        if key_share.core.i != index {
-            return Err(format!("Key share index mismatch: file {} contains share for index {}, but expected index {}", 
-                              filename, key_share.core.i, index).into());
+        if key_shares.is_empty() {
+            return Err("No key share files found. Please ensure the key share files are properly distributed.".into());
         }
-
-        info!("   ✓ Key share loaded successfully from {}", filename);
-
-        Ok(key_share)
+        
+        info!("✓ Loaded {} key shares in total", key_shares.len());
+        Ok(key_shares)
     }
 
     /// Create a new participant handler with the given client and index
     pub fn new(client: Client, index: u16) -> Result<Self, Box<dyn Error>> {
         info!("Loading participant configuration for index: {}", index);
         
-        // Load the specific key share for this participant
-        let key_share = Self::load_key_share_from_file(index)?;
+        // 加载所有可用的key shares
+        let key_shares = Self::load_key_shares_from_files()?;
         
         info!("✓ Participant {} initialized successfully", index);
-        info!("  - Key share loaded for participant index: {}", index);
-        info!("  - Using file: key_share_{}.json", index + 1);
+        info!("  - Loaded {} key shares", key_shares.len());
+        info!("  - Available account_ids: {:?}", key_shares.keys().collect::<Vec<_>>());
         
         Ok(Self {
             client,
             index,
-            key_share,
+            key_shares,
         })
+    }
+    
+    /// Get key share and index for a specific account_id
+    fn get_key_share_by_account_id(&self, account_id: &str) -> Result<(&KeyShare<Secp256k1, SecurityLevel128>, u16), Box<dyn Error>> {
+        let key_share = self.key_shares.get(account_id)
+            .ok_or_else(|| format!("Key share not found for account_id: {}", account_id))?;
+        
+        let index = key_share.core.i;
+        Ok((key_share, index))
     }
 }
 
@@ -94,26 +112,37 @@ impl Participant for ParticipantHandler {
         let execution_id = req.execution_id;
         let chain = Chain::try_from(req.chain).map_err(|_| Status::internal("Invalid chain"))?;
         let tx = req.data;
-        let derivation_path = if req.derivation_path.is_empty() {
-            None
-        } else {
-            Some(req.derivation_path)
-        };
+        let account_id = req.account_id;
 
-        info!("Processing sign request - tx_id: {}, chain: {:?}, derivation_path: {:?}", 
-              tx_id, chain, derivation_path);
+        // 验证account_id不能为空
+        if account_id.is_empty() {
+            return Err(Status::invalid_argument("account_id cannot be empty"));
+        }
+
+        info!("Processing sign request - tx_id: {}, chain: {:?}, account_id: {}", 
+              tx_id, chain, account_id);
+
+        // 通过account_id获取对应的key_share和index
+        let (key_share, signing_index) = self.get_key_share_by_account_id(&account_id)
+            .map_err(|e| {
+                log::error!("Failed to get key share for account_id {}: {}", account_id, e);
+                Status::not_found(format!("Key share not found for account_id: {}", account_id))
+            })?;
 
         let signing = Signing::new(&self.client, tx_id);
 
+        // 使用account_id对应的key_share和index进行签名
+        // 注意：现在不再需要derivation_path，因为每个account_id对应的key_share已经是派生后的
         let (r, s, v) = signing
-            .sign_tx(self.index, &execution_id, &tx, self.key_share.clone(), chain, derivation_path)
+            .sign_tx(signing_index, &execution_id, &tx, key_share.clone(), chain, None)
             .await
             .map_err(|e| {
                 log::error!("Transaction signing failed: {}", e);
                 Status::internal("Transaction signing failed")
             })?;
 
-        info!("Transaction signed successfully - tx_id: {}", tx_id);
+        info!("Transaction signed successfully - tx_id: {}, account_id: {}, using index: {}", 
+              tx_id, account_id, signing_index);
 
         Ok(Response::new(SignatureMessage { r, s, v }))
     }

@@ -15,6 +15,7 @@ path = "uniffi-bindgen.rs"
 uniffi = { workspace = true, features = ["tokio", "cli", "scaffolding-ffi-buffer-fns"] }
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 serde_yaml = "0.9.34"
 log = { workspace = true }
 env_logger = { workspace = true }
@@ -23,6 +24,8 @@ futures = { workspace = true }
 tonic = { workspace = true }
 uuid = { version = "1.0", features = ["v4"] }
 thiserror = "1.0"
+reqwest = { version = "0.12.5", default-features = false, features = ["rustls-tls", "json", "stream"] }
+cggmp21 = { version = "0.6.2", features = ["curve-secp256k1", "hd-wallet", "hd-slip10"] }
 
 # Internal dependencies
 participant = { path = "../participant" }

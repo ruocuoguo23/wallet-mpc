@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 mod signer;
-pub use signer::{Signer, SignatureResult as InternalSignatureResult};
+pub use signer::{Signer, SignatureResult as InternalSignatureResult, SignerConfig, KeyShareData};
 
 // UniFFI exports
 uniffi::include_scaffolding!("mpc_client");
@@ -38,13 +38,29 @@ impl From<InternalSignatureResult> for SignatureResult {
     }
 }
 
+/// Key share data for UniFFI
+#[derive(Debug, Clone)]
+pub struct KeyShare {
+    pub account_id: String,
+    pub key_share_data: String,
+}
+
+impl From<KeyShare> for KeyShareData {
+    fn from(ks: KeyShare) -> Self {
+        KeyShareData {
+            account_id: ks.account_id,
+            key_share_data: ks.key_share_data,
+        }
+    }
+}
+
 /// MPC configuration for UniFFI
 #[derive(Debug, Clone)]
 pub struct MpcConfig {
     pub local_participant_host: String,
     pub local_participant_port: u16,
     pub local_participant_index: u16,
-    pub key_share_file: String,
+    pub key_shares: Vec<KeyShare>,  // 使用key_shares替代key_share_file
     pub sign_service_host: String,
     pub sign_service_port: u16,
     pub sse_host: String,
@@ -53,6 +69,25 @@ pub struct MpcConfig {
     pub threshold: u16,
     pub total_participants: u16,
     pub log_level: String,
+}
+
+impl From<MpcConfig> for SignerConfig {
+    fn from(config: MpcConfig) -> Self {
+        SignerConfig {
+            local_participant_host: config.local_participant_host,
+            local_participant_port: config.local_participant_port,
+            local_participant_index: config.local_participant_index,
+            key_shares: config.key_shares.into_iter().map(|ks| ks.into()).collect(),
+            sign_service_host: config.sign_service_host,
+            sign_service_port: config.sign_service_port,
+            sse_host: config.sse_host,
+            sse_port: config.sse_port,
+            sign_service_index: config.sign_service_index,
+            threshold: config.threshold,
+            total_participants: config.total_participants,
+            log_level: config.log_level,
+        }
+    }
 }
 
 /// Tokio runtime wrapper
@@ -95,54 +130,11 @@ impl MpcSigner {
         let signer_mutex = self.signer.clone();
         
         self.runtime.rt.block_on(async move {
-            // Create YAML config content from MpcConfig
-            let yaml_config = format!(
-                r#"
-local_participant:
-  host: "{}"
-  port: {}
-  index: {}
-  key_share_file: "{}"
+            // Convert MpcConfig to SignerConfig
+            let signer_config: SignerConfig = config.into();
 
-remote_services:
-  sign_service:
-    participant_host: "{}"
-    participant_port: {}
-    sse_host: "{}"
-    sse_port: {}
-    index: {}
-
-mpc:
-  threshold: {}
-  total_participants: {}
-
-logging:
-  level: "{}"
-  format: "text"
-"#,
-                config.local_participant_host,
-                config.local_participant_port,
-                config.local_participant_index,
-                config.key_share_file,
-                config.sign_service_host,
-                config.sign_service_port,
-                config.sse_host,
-                config.sse_port,
-                config.sign_service_index,
-                config.threshold,
-                config.total_participants,
-                config.log_level
-            );
-
-            // Write temporary config file
-            let temp_config_path = "/tmp/mpc_client_config.yaml";
-            std::fs::write(temp_config_path, yaml_config)
-                .map_err(|e| MpcError::ConfigError { 
-                    msg: format!("Failed to write config file: {}", e)
-                })?;
-
-            // Create signer
-            let signer = Signer::new(temp_config_path)
+            // Create signer with direct config (no file loading)
+            let signer = Signer::new(signer_config)
                 .await
                 .map_err(|e| MpcError::InitializationError { 
                     msg: format!("Failed to create signer: {}", e)
@@ -175,14 +167,14 @@ logging:
         Ok(())
     }
 
-    /// Sign data using MPC
-    pub fn sign_data(&self, data: Vec<u8>, derivation_path: Option<Vec<u32>>) -> Result<SignatureResult, MpcError> {
+    /// Sign data using MPC with account_id
+    pub fn sign_data(&self, data: Vec<u8>, account_id: String) -> Result<SignatureResult, MpcError> {
         let signer_mutex = self.signer.clone();
         
         self.runtime.rt.block_on(async move {
             let mut signer_guard = signer_mutex.lock().await;
             if let Some(ref mut signer) = *signer_guard {
-                let result = signer.sign(data, derivation_path)
+                let result = signer.sign(data, account_id)
                     .await
                     .map_err(|e| MpcError::SigningError { 
                         msg: format!("Signing failed: {}", e)
@@ -235,6 +227,28 @@ pub fn create_mpc_signer(config_path: String) -> Result<Arc<MpcSigner>, MpcError
     let logging = config.get("logging")
         .ok_or_else(|| MpcError::ConfigError { msg: "Missing logging config".to_string() })?;
 
+    // Load key share from file for backward compatibility
+    let key_share_file = local_participant.get("key_share_file")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| MpcError::ConfigError { msg: "Missing local_participant.key_share_file".to_string() })?;
+    
+    let participant_index = local_participant.get("index")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| MpcError::ConfigError { msg: "Missing local_participant.index".to_string() })?
+        as u16;
+    
+    // Read key share file content
+    let key_share_content = std::fs::read_to_string(key_share_file)
+        .map_err(|e| MpcError::ConfigError { 
+            msg: format!("Failed to read key share file {}: {}", key_share_file, e)
+        })?;
+    
+    // Create key share with default account_id based on participant index
+    let key_shares = vec![KeyShare {
+        account_id: format!("account_{}", participant_index),
+        key_share_data: key_share_content,
+    }];
+
     let mpc_config = MpcConfig {
         local_participant_host: local_participant.get("host")
             .and_then(|v| v.as_str())
@@ -244,14 +258,8 @@ pub fn create_mpc_signer(config_path: String) -> Result<Arc<MpcSigner>, MpcError
             .and_then(|v| v.as_u64())
             .ok_or_else(|| MpcError::ConfigError { msg: "Missing local_participant.port".to_string() })?
             as u16,
-        local_participant_index: local_participant.get("index")
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| MpcError::ConfigError { msg: "Missing local_participant.index".to_string() })?
-            as u16,
-        key_share_file: local_participant.get("key_share_file")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| MpcError::ConfigError { msg: "Missing local_participant.key_share_file".to_string() })?
-            .to_string(),
+        local_participant_index: participant_index,
+        key_shares, // 使用转换后的key_shares
         sign_service_host: sign_service.get("participant_host")
             .and_then(|v| v.as_str())
             .ok_or_else(|| MpcError::ConfigError { msg: "Missing sign_service.participant_host".to_string() })?

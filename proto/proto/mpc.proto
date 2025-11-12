@@ -16,7 +16,7 @@ message SignMessage {
     bytes execution_id = 2;
     Chain chain = 3;
     bytes data = 4;
-    repeated uint32 derivation_path = 5;
+    string account_id = 5;  // 用account_id替代derivation_path
 }
 
 message SignatureMessage {

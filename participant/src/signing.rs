@@ -5,7 +5,7 @@ use anyhow::Result;
 use cggmp21::DataToSign;
 use cggmp21::ExecutionId;
 use cggmp21::KeyShare;
-use generic_ec::{Curve, Point, coords::HasAffineX, NonZero};
+use generic_ec::{Curve, Point, coords::HasAffineX};
 use proto::mpc::Chain;
 
 use cggmp21::round_based::MpcParty;
@@ -27,16 +27,6 @@ impl CurveParams for cggmp21::supported_curves::Secp256k1 {
     // type ExVerifier = external_verifier::Bitcoin;
 }
 
-// impl CurveParams for cggmp24::supported_curves::Secp256r1 {
-//     type HdAlgo = cggmp24::hd_wallet::Slip10;
-//     // type ExVerifier = external_verifier::Noop;
-// }
-//
-// impl CurveParams for cggmp24::supported_curves::Stark {
-//     type HdAlgo = cggmp24::hd_wallet::Stark;
-//     // type ExVerifier = external_verifier::blockchains::StarkNet;
-// }
-
 pub struct Signing {
     room: Room,
 }
@@ -55,7 +45,7 @@ impl Signing {
         tx: &[u8],
         key_share: KeyShare<T, SecurityLevel128>,
         chain: Chain,
-        derivation_path: Option<Vec<u32>>,
+        _derivation_path: Option<Vec<u32>>, // 保留参数兼容性但不使用，因为key_share已经是预先派生的
     ) -> Result<(Vec<u8>, Vec<u8>, u32)>
     where
         T: Curve + CurveParams + cggmp21::hd_wallet::slip10::SupportedCurve,
@@ -75,20 +65,8 @@ impl Signing {
         // Indexes must be issued on room creation and stored in DB.
         let signing = cggmp21::signing(eid, index, &[0, 1], &key_share);
         
-        // Apply HD wallet derivation path if provided
-        let signing = if let Some(derivation_path) = derivation_path.as_ref() {
-            log::info!("Using HD wallet with derivation path: {:?}", derivation_path);
-            signing
-                // .set_derivation_path_with_algo::<T::HdAlgo, _>(derivation_path.iter().cloned())
-                .set_derivation_path(derivation_path.iter().cloned())
-                .map_err(|err| {
-                    log::error!("Failed to set derivation path: {err}");
-                    anyhow::anyhow!("HD wallet derivation path error: {}", err)
-                })?
-        } else {
-            log::info!("Using standard signing (no HD wallet derivation)");
-            signing
-        };
+        // 不再需要HD钱包派生，因为key_share已经是预先派生的
+        log::info!("Using pre-derived key share (account-specific)");
         
         let signature = signing
             .sign(&mut rand::rngs::OsRng, party, data)
@@ -110,105 +88,33 @@ impl Signing {
         // Upper layers can convert this to chain-specific format (e.g., EIP-155 for Ethereum)
         let recovery_id = match chain {
             Chain::Ethereum => {
-                // Use derived public key for HD wallet, otherwise use shared public key
-                // Following the BIP-32 standard implementation
-                let public_key = if let Some(derivation_path) = derivation_path.as_ref() {
-                    log::info!("Computing public key from derivation path: {:?}", derivation_path);
+                // 直接使用预先派生的key_share中的shared_public_key
+                // 这个public_key已经对应特定的account_id
+                let public_key = key_share.shared_public_key;
 
-                    // Derive child public key following BIP-32 standard
-                    let child_key = key_share
-                        .derive_child_public_key::<T::HdAlgo, _>(derivation_path.iter().cloned())
-                        .map_err(|err| {
-                            log::error!("Failed to derive child public key: {err}");
-                            anyhow::anyhow!("HD wallet child key derivation error: {}", err)
-                        })?;
+                // Print public key information
+                log::info!("📊 Account-specific Public Key Details:");
+                let pub_key_compressed = public_key.to_bytes(true);
+                let pub_key_uncompressed = public_key.to_bytes(false);
+                log::info!("  Compressed (33 bytes): 0x{}", hex::encode(&pub_key_compressed));
+                log::info!("  Uncompressed (65 bytes): 0x{}", hex::encode(&pub_key_uncompressed));
 
-                    // Wrap the derived public key with NonZero (important for proper key handling)
-                    let derived_public_key = NonZero::from_point(child_key.public_key)
-                        .ok_or_else(|| {
-                            log::error!("Derived public key is zero point (invalid)");
-                            anyhow::anyhow!("HD wallet derived public key is invalid (zero point)")
-                        })?;
+                // Calculate and print Ethereum address for this account
+                if pub_key_uncompressed.len() == 65 && pub_key_uncompressed[0] == 0x04 {
+                    // Remove the 0x04 prefix for keccak256 hashing
+                    let pub_key_data = &pub_key_uncompressed[1..];
+                    let hash = keccak256(pub_key_data);
+                    let address = Address::from_slice(&hash[12..]);
 
-                    // Print detailed public key information
-                    log::info!("📊 Derived Public Key Details:");
-                    let pub_key_compressed = derived_public_key.to_bytes(true);
-                    let pub_key_uncompressed = derived_public_key.to_bytes(false);
-                    log::info!("  Compressed (33 bytes): 0x{}", hex::encode(&pub_key_compressed));
-                    log::info!("  Uncompressed (65 bytes): 0x{}", hex::encode(&pub_key_uncompressed));
-                    log::info!("  First byte (should be 0x04): 0x{:02x}", pub_key_uncompressed.get(0).unwrap_or(&0));
-                    log::info!("  Length: {} bytes", pub_key_uncompressed.len());
+                    log::info!("🔐 Ethereum Address Derivation:");
+                    log::info!("  Public key (64 bytes, no prefix): 0x{}", hex::encode(pub_key_data));
+                    log::info!("  Keccak256 hash: 0x{}", hex::encode(&hash));
+                    log::info!("  Address (last 20 bytes): {}", address.to_checksum(None));
 
-                    println!("\n📊 Derived Public Key Details:");
-                    println!("  Compressed: 0x{}", hex::encode(&pub_key_compressed));
-                    println!("  Uncompressed: 0x{}", hex::encode(&pub_key_uncompressed));
-
-                    // Verify signature with derived public key
-                    if let Err(e) = signature.verify(&derived_public_key, &data) {
-                        log::error!("❌ Signature verification failed with derived public key: {:?}", e);
-                        return Err(anyhow::anyhow!("Signature verification failed: {:?}", e));
-                    }
-                    log::info!("✅ Signature verified successfully with derived public key");
-
-                    // if let Err(e) = T::ExVerifier::verify(&derived_public_key, &signature, tx) {
-                    //     log::error!("❌ External signature verification failed: {:?}", e);
-                    //     return Err(anyhow::anyhow!("External signature verification failed: {:?}", e));
-                    // }
-                    // log::info!("✅ External signature verified successfully");
-
-                    // Calculate and print Ethereum address for derived public key
-                    if pub_key_uncompressed.len() == 65 && pub_key_uncompressed[0] == 0x04 {
-                        // Remove the 0x04 prefix for keccak256 hashing
-                        let pub_key_data = &pub_key_uncompressed[1..];
-                        let hash = keccak256(pub_key_data);
-                        let address = Address::from_slice(&hash[12..]);
-
-                        log::info!("🔐 Ethereum Address Derivation:");
-                        log::info!("  Public key (64 bytes, no prefix): 0x{}", hex::encode(pub_key_data));
-                        log::info!("  Keccak256 hash: 0x{}", hex::encode(&hash));
-                        log::info!("  Address (last 20 bytes): {:#x}", address);
-
-                        println!("🏦 HD Wallet Derived Ethereum Address: {:#x}", address);
-                    } else {
-                        log::error!("❌ Invalid public key format!");
-                        log::error!("   Expected: 65 bytes starting with 0x04");
-                        log::error!("   Actual: {} bytes starting with 0x{:02x}",
-                                   pub_key_uncompressed.len(),
-                                   pub_key_uncompressed.get(0).unwrap_or(&0));
-                        return Err(anyhow::anyhow!("Invalid public key format for Ethereum address calculation"));
-                    }
-
-                    derived_public_key
+                    println!("🏦 Account-specific Ethereum Address: {}", address.to_checksum(None));
                 } else {
-                    // Use shared public key (no HD derivation)
-                    let shared_public_key = key_share.shared_public_key;
-
-                    // Print shared public key information
-                    log::info!("📊 Shared Public Key Details (no HD derivation):");
-                    let pub_key_compressed = shared_public_key.to_bytes(true);
-                    let pub_key_uncompressed = shared_public_key.to_bytes(false);
-                    log::info!("  Compressed (33 bytes): 0x{}", hex::encode(&pub_key_compressed));
-                    log::info!("  Uncompressed (65 bytes): 0x{}", hex::encode(&pub_key_uncompressed));
-
-                    // Calculate and print Ethereum address for shared public key
-                    if pub_key_uncompressed.len() == 65 && pub_key_uncompressed[0] == 0x04 {
-                        // Remove the 0x04 prefix for keccak256 hashing
-                        let pub_key_data = &pub_key_uncompressed[1..];
-                        let hash = keccak256(pub_key_data);
-                        let address = Address::from_slice(&hash[12..]);
-
-                        log::info!("🔐 Ethereum Address Derivation:");
-                        log::info!("  Public key (64 bytes, no prefix): 0x{}", hex::encode(pub_key_data));
-                        log::info!("  Keccak256 hash: 0x{}", hex::encode(&hash));
-                        log::info!("  Address (last 20 bytes): {}", address.to_checksum(None));
-
-                        println!("🏦 Standard MPC Ethereum Address: {}", address.to_checksum(None));
-                    } else {
-                        log::warn!("Invalid public key format for Ethereum address calculation");
-                    }
-
-                    shared_public_key
-                };
+                    log::warn!("Invalid public key format for Ethereum address calculation");
+                }
 
                 // Compute recovery ID using k256 library
                 let pub_key = public_key.to_bytes(false);
