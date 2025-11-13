@@ -1,7 +1,4 @@
-namespace mpc_client {
-    [Throws=MpcError]
-    MpcSigner create_mpc_signer(string config_path);
-};
+namespace mpc_client {};
 
 [Error]
 interface MpcError {
