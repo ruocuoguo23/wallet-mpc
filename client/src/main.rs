@@ -7,10 +7,10 @@ use anyhow::{Result, Context};
 use log::{error, info};
 use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
 
-use mpc_client::{Signer, SignerConfig, KeyShareData};
+use mpc_client::{MpcSigner, MpcConfig, KeyShare};
 
-/// Load client configuration from YAML file and convert to SignerConfig
-fn load_signer_config(config_path: &str) -> Result<SignerConfig> {
+/// Load client configuration from YAML file and convert to MpcConfig
+fn load_mpc_config(config_path: &str) -> Result<MpcConfig> {
     let yaml_content = fs::read_to_string(config_path)
         .with_context(|| format!("Failed to read config file: {}", config_path))?;
     
@@ -49,16 +49,14 @@ fn load_signer_config(config_path: &str) -> Result<SignerConfig> {
     
     // Create multiple account_ids representing different HD wallet addresses
     // Each would normally have its own pre-derived key_share
-    for i in 0..3 {
-        let account_id = format!("account_{}_{}", participant_index, i);
-        key_shares.push(KeyShareData {
-            account_id: account_id.clone(),
-            key_share_data: key_share_content.clone(), // In production, each would be different
-        });
-        info!("Added account_id: {}", account_id);
-    }
+    let account_id = format!("{}", 1);
+    key_shares.push(KeyShare {
+        account_id: account_id.clone(),
+        key_share_data: key_share_content.clone(), // In production, each would be different
+    });
+    info!("Added account_id: {}", account_id);
     
-    Ok(SignerConfig {
+    Ok(MpcConfig {
         local_participant_host: local_participant.get("host")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing local_participant.host"))?
@@ -148,31 +146,31 @@ async fn main() -> Result<()> {
         .nth(1)
         .unwrap_or_else(|| "config/client.yaml".to_string());
 
-    // Load configuration from YAML and create SignerConfig
-    let signer_config = load_signer_config(&config_path)?;
+    // Load configuration from YAML and create MpcConfig
+    let mpc_config = load_mpc_config(&config_path)?;
     
     // Print available account_ids
     println!("\n📋 Available Account IDs:");
-    for key_share in &signer_config.key_shares {
+    for key_share in &mpc_config.key_shares {
         println!("  - {}", key_share.account_id);
     }
 
-    // Initialize Signer with SignerConfig
-    let mut signer = match Signer::new(signer_config).await {
+    // Initialize MpcSigner with MpcConfig
+    let signer = match MpcSigner::new(mpc_config) {
         Ok(s) => {
-            info!("✅ Signer initialized successfully");
+            info!("✅ MpcSigner initialized successfully");
             s
         }
         Err(e) => {
-            error!("❌ Failed to initialize signer: {}", e);
-            return Err(e);
+            error!("❌ Failed to initialize MpcSigner: {}", e);
+            return Err(e.into());
         }
     };
 
-    // Start local participant server
-    if let Err(e) = signer.start_local_participant().await {
-        error!("❌ Failed to start local participant: {}", e);
-        return Err(e);
+    // Initialize and start MPC infrastructure
+    if let Err(e) = signer.initialize() {
+        error!("❌ Failed to initialize MPC infrastructure: {}", e);
+        return Err(e.into());
     }
 
     println!("\n📡 MPC Infrastructure Ready");
@@ -204,7 +202,7 @@ async fn main() -> Result<()> {
 
     // Use account_id instead of derivation path
     // This represents a pre-derived HD wallet address
-    let account_id = "account_1_0".to_string(); // Using first account for demo
+    let account_id = "1".to_string(); // Using first account for demo
     
     println!("\n🗝️  Using Account ID Architecture");
     println!("Account ID: {}", account_id);
@@ -284,7 +282,7 @@ async fn main() -> Result<()> {
     println!("- Architecture: Account ID -> Key Share Mapping (no runtime derivation)");
 
     // Execute MPC signature with account_id
-    match signer.sign(signing_hash_bytes.clone(), account_id.clone()).await {
+    match signer.sign_data(signing_hash_bytes.clone(), account_id.clone()) {
         Ok(signature) => {
             println!("\n✅ Account ID Signature Generated Successfully!");
             println!("📝 Signature components:");
@@ -403,21 +401,16 @@ async fn main() -> Result<()> {
             println!("- Check that the account_id exists in the key_shares mapping");
 
             // Try to cleanup resources
-            if let Err(cleanup_err) = signer.stop_local_participant().await {
-                error!("Failed to cleanup local participant: {}", cleanup_err);
-            }
+            signer.shutdown();
             
-            return Err(e);
+            return Err(e.into());
         }
     }
 
     // Graceful shutdown
     println!("\n🛑 Shutting Down");
-    if let Err(e) = signer.stop_local_participant().await {
-        error!("Failed to stop local participant gracefully: {}", e);
-    } else {
-        println!("✅ Local participant server stopped");
-    }
+    signer.shutdown();
+    println!("✅ MPC infrastructure stopped");
 
     println!("\n🎯 Account ID MPC Client Demo Completed");
     println!("=========================================");

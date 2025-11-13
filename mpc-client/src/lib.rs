@@ -90,37 +90,18 @@ impl From<MpcConfig> for SignerConfig {
     }
 }
 
-/// Tokio runtime wrapper
-struct TokioRuntime {
-    rt: tokio::runtime::Runtime,
-}
-
-impl TokioRuntime {
-    fn new() -> Result<Self, MpcError> {
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| MpcError::InitializationError { 
-                msg: format!("Failed to create tokio runtime: {}", e)
-            })?;
-        Ok(Self { rt })
-    }
-}
-
 /// MPC Signer for UniFFI
 pub struct MpcSigner {
     signer: Arc<Mutex<Option<Signer>>>,
     config: MpcConfig,
-    runtime: Arc<TokioRuntime>,
 }
 
 impl MpcSigner {
     /// Create a new MPC signer with configuration
     pub fn new(config: MpcConfig) -> Result<Self, MpcError> {
-        let runtime = Arc::new(TokioRuntime::new()?);
-        
         Ok(Self {
             signer: Arc::new(Mutex::new(None)),
             config,
-            runtime,
         })
     }
 
@@ -128,40 +109,46 @@ impl MpcSigner {
     pub fn initialize(&self) -> Result<(), MpcError> {
         let config = self.config.clone();
         let signer_mutex = self.signer.clone();
-        
-        self.runtime.rt.block_on(async move {
-            // Convert MpcConfig to SignerConfig
-            let signer_config: SignerConfig = config.into();
 
-            // Create signer with direct config (no file loading)
-            let signer = Signer::new(signer_config)
-                .await
-                .map_err(|e| MpcError::InitializationError { 
-                    msg: format!("Failed to create signer: {}", e)
-                })?;
+        // Use spawn_blocking to run async code
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move {
+                // Convert MpcConfig to SignerConfig
+                let signer_config: SignerConfig = config.into();
 
-            // Store the signer
-            let mut signer_guard = signer_mutex.lock().await;
-            *signer_guard = Some(signer);
+                // Create signer with direct config (no file loading)
+                let signer = Signer::new(signer_config)
+                    .await
+                    .map_err(|e| MpcError::InitializationError {
+                        msg: format!("Failed to create signer: {}", e)
+                    })?;
 
-            Ok::<_, MpcError>(())
+                // Store the signer
+                let mut signer_guard = signer_mutex.lock().await;
+                *signer_guard = Some(signer);
+
+                Ok::<_, MpcError>(())
+            })
         })?;
 
         // Start local participant
         let signer_mutex = self.signer.clone();
-        self.runtime.rt.block_on(async move {
-            let mut signer_guard = signer_mutex.lock().await;
-            if let Some(ref mut signer) = *signer_guard {
-                signer.start_local_participant()
-                    .await
-                    .map_err(|e| MpcError::InitializationError { 
-                        msg: format!("Failed to start local participant: {}", e)
+
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move {
+                let mut signer_guard = signer_mutex.lock().await;
+                if let Some(ref mut signer) = *signer_guard {
+                    signer.start_local_participant()
+                        .await
+                        .map_err(|e| MpcError::InitializationError {
+                            msg: format!("Failed to start local participant: {}", e)
+                        })
+                } else {
+                    Err(MpcError::InitializationError {
+                        msg: "Signer not initialized".to_string()
                     })
-            } else {
-                Err(MpcError::InitializationError { 
-                    msg: "Signer not initialized".to_string()
-                })
-            }
+                }
+            })
         })?;
 
         Ok(())
@@ -171,20 +158,22 @@ impl MpcSigner {
     pub fn sign_data(&self, data: Vec<u8>, account_id: String) -> Result<SignatureResult, MpcError> {
         let signer_mutex = self.signer.clone();
         
-        self.runtime.rt.block_on(async move {
-            let mut signer_guard = signer_mutex.lock().await;
-            if let Some(ref mut signer) = *signer_guard {
-                let result = signer.sign(data, account_id)
-                    .await
-                    .map_err(|e| MpcError::SigningError { 
-                        msg: format!("Signing failed: {}", e)
-                    })?;
-                Ok(result.into())
-            } else {
-                Err(MpcError::InitializationError { 
-                    msg: "Signer not initialized".to_string()
-                })
-            }
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move {
+                let mut signer_guard = signer_mutex.lock().await;
+                if let Some(ref mut signer) = *signer_guard {
+                    let result = signer.sign(data, account_id)
+                        .await
+                        .map_err(|e| MpcError::SigningError {
+                            msg: format!("Signing failed: {}", e)
+                        })?;
+                    Ok(result.into())
+                } else {
+                    Err(MpcError::InitializationError {
+                        msg: "Signer not initialized".to_string()
+                    })
+                }
+            })
         })
     }
 
@@ -192,12 +181,14 @@ impl MpcSigner {
     pub fn shutdown(&self) {
         let signer_mutex = self.signer.clone();
         
-        let _ = self.runtime.rt.block_on(async move {
-            let mut signer_guard = signer_mutex.lock().await;
-            if let Some(ref mut signer) = *signer_guard {
-                let _ = signer.stop_local_participant().await;
-            }
-            *signer_guard = None;
+        let _ = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move {
+                let mut signer_guard = signer_mutex.lock().await;
+                if let Some(ref mut signer) = *signer_guard {
+                    let _ = signer.stop_local_participant().await;
+                }
+                *signer_guard = None;
+            })
         });
     }
 }
