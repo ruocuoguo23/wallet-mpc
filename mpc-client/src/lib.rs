@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::runtime::Runtime;
 
 mod signer;
 pub use signer::{Signer, SignatureResult as InternalSignatureResult, SignerConfig, KeyShareData};
@@ -94,101 +95,130 @@ impl From<MpcConfig> for SignerConfig {
 pub struct MpcSigner {
     signer: Arc<Mutex<Option<Signer>>>,
     config: MpcConfig,
+    runtime: Arc<Runtime>,
 }
 
 impl MpcSigner {
     /// Create a new MPC signer with configuration
     pub fn new(config: MpcConfig) -> Result<Self, MpcError> {
+        let signer_config: SignerConfig = config.clone().into();
+        let signer_mutex = Arc::new(Mutex::new(None));
+        let signer_mutex_clone = signer_mutex.clone();
+
+        // Create runtime in a separate thread to avoid nesting issues
+        let (runtime, result) = std::thread::scope(|s| {
+            let handle = s.spawn(|| {
+                let runtime = Runtime::new()
+                    .map_err(|e| MpcError::InitializationError {
+                        msg: format!("Failed to create tokio runtime: {}", e)
+                    })?;
+
+                let result = runtime.block_on(async move {
+                    let signer = Signer::new(signer_config)
+                        .await
+                        .map_err(|e| MpcError::InitializationError {
+                            msg: format!("Failed to create signer: {}", e)
+                        })?;
+
+                    let mut signer_guard = signer_mutex_clone.lock().await;
+                    *signer_guard = Some(signer);
+
+                    Ok::<(), MpcError>(())
+                });
+
+                Ok::<(Runtime, Result<(), MpcError>), MpcError>((runtime, result))
+            });
+
+            handle.join().map_err(|_| MpcError::InitializationError {
+                msg: "Thread panicked during initialization".to_string()
+            })?
+        })?;
+
+        result?;
+
         Ok(Self {
-            signer: Arc::new(Mutex::new(None)),
+            signer: signer_mutex,
             config,
+            runtime: Arc::new(runtime),
         })
     }
 
-    /// Initialize the MPC signer
+    /// Initialize the MPC signer (start local participant)
     pub fn initialize(&self) -> Result<(), MpcError> {
-        let config = self.config.clone();
         let signer_mutex = self.signer.clone();
+        let runtime = self.runtime.clone();
 
-        // Use spawn_blocking to run async code
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async move {
-                // Convert MpcConfig to SignerConfig
-                let signer_config: SignerConfig = config.into();
-
-                // Create signer with direct config (no file loading)
-                let signer = Signer::new(signer_config)
-                    .await
-                    .map_err(|e| MpcError::InitializationError {
-                        msg: format!("Failed to create signer: {}", e)
-                    })?;
-
-                // Store the signer
-                let mut signer_guard = signer_mutex.lock().await;
-                *signer_guard = Some(signer);
-
-                Ok::<_, MpcError>(())
-            })
-        })?;
-
-        // Start local participant
-        let signer_mutex = self.signer.clone();
-
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async move {
-                let mut signer_guard = signer_mutex.lock().await;
-                if let Some(ref mut signer) = *signer_guard {
-                    signer.start_local_participant()
-                        .await
-                        .map_err(|e| MpcError::InitializationError {
-                            msg: format!("Failed to start local participant: {}", e)
+        std::thread::scope(|s| {
+            let handle = s.spawn(move || {
+                runtime.block_on(async move {
+                    let mut signer_guard = signer_mutex.lock().await;
+                    if let Some(ref mut signer) = *signer_guard {
+                        signer.start_local_participant()
+                            .await
+                            .map_err(|e| MpcError::InitializationError {
+                                msg: format!("Failed to start local participant: {}", e)
+                            })
+                    } else {
+                        Err(MpcError::InitializationError {
+                            msg: "Signer not initialized".to_string()
                         })
-                } else {
-                    Err(MpcError::InitializationError {
-                        msg: "Signer not initialized".to_string()
-                    })
-                }
-            })
-        })?;
+                    }
+                })
+            });
 
-        Ok(())
+            handle.join().map_err(|_| MpcError::InitializationError {
+                msg: "Thread panicked during initialization".to_string()
+            })?
+        })
     }
 
     /// Sign data using MPC with account_id
     pub fn sign_data(&self, data: Vec<u8>, account_id: String) -> Result<SignatureResult, MpcError> {
         let signer_mutex = self.signer.clone();
-        
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async move {
-                let mut signer_guard = signer_mutex.lock().await;
-                if let Some(ref mut signer) = *signer_guard {
-                    let result = signer.sign(data, account_id)
-                        .await
-                        .map_err(|e| MpcError::SigningError {
-                            msg: format!("Signing failed: {}", e)
-                        })?;
-                    Ok(result.into())
-                } else {
-                    Err(MpcError::InitializationError {
-                        msg: "Signer not initialized".to_string()
-                    })
-                }
-            })
+        let runtime = self.runtime.clone();
+
+        std::thread::scope(|s| {
+            let handle = s.spawn(move || {
+                runtime.block_on(async move {
+                    let mut signer_guard = signer_mutex.lock().await;
+                    if let Some(ref mut signer) = *signer_guard {
+                        let result = signer.sign(data, account_id)
+                            .await
+                            .map_err(|e| MpcError::SigningError {
+                                msg: format!("Signing failed: {}", e)
+                            })?;
+                        Ok(result.into())
+                    } else {
+                        Err(MpcError::InitializationError {
+                            msg: "Signer not initialized".to_string()
+                        })
+                    }
+                })
+            });
+
+            handle.join().map_err(|_| MpcError::SigningError {
+                msg: "Thread panicked during signing".to_string()
+            })?
         })
     }
 
     /// Shutdown the MPC signer
     pub fn shutdown(&self) {
         let signer_mutex = self.signer.clone();
-        
-        let _ = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async move {
-                let mut signer_guard = signer_mutex.lock().await;
-                if let Some(ref mut signer) = *signer_guard {
-                    let _ = signer.stop_local_participant().await;
-                }
-                *signer_guard = None;
-            })
+        let runtime = self.runtime.clone();
+
+        let _ = std::thread::scope(|s| {
+            let handle = s.spawn(move || {
+                runtime.block_on(async move {
+                    let mut signer_guard = signer_mutex.lock().await;
+                    if let Some(ref mut signer) = *signer_guard {
+                        let _ = signer.stop_local_participant().await;
+                    }
+                    *signer_guard = None;
+                })
+            });
+
+            handle.join()
         });
     }
 }
