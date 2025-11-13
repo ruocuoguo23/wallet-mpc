@@ -1,31 +1,31 @@
 # Client Configuration
-# 本地participant配置
+# Local participant configuration
 local_participant:
   host: "127.0.0.1"
-  port: 50052  # 与sign-service的participant端口不冲突
-  index: 1     # 本客户端作为participant 1
-  key_share_file: "client_key_shares.json"  # 对应index 1的key share
+  port: 50052  # Does not conflict with the participant port of sign-service
+  index: 1     # This client acts as participant 1
+  key_share_file: "client_key_shares.json"  # Key share corresponding to index 1
 
-# 远程sign-service配置
+# Remote sign-service configuration
 remote_services:
   sign_service:
     participant_host: "127.0.0.1"
     participant_port: 50051
-    sse_host: "127.0.0.1"      # SSE服务器地址（部署在sign-service中）
-    sse_port: 8080             # SSE服务器端口
-    index: 0  # sign-service作为participant 0
+    sse_host: "127.0.0.1"      # SSE server address (deployed in sign-service)
+    sse_port: 8080             # SSE server port
+    index: 0  # sign-service acts as participant 0
 
-# Ethereum provider配置
+# Ethereum provider configuration
 ethereum:
   provider_url: "https://eth-sepolia.g.alchemy.com/v2/your-api-key"
   chain_id: 11155111  # Sepolia testnet
 
-# MPC配置
+# MPC configuration
 mpc:
   threshold: 2
   total_participants: 3
 
-# 日志配置
+# Logging configuration
 logging:
   level: "info"
   format: "text"

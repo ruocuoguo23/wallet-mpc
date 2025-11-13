@@ -32,7 +32,7 @@ pub struct ParticipantServer {
 #[derive(Clone)]
 pub struct ParticipantHandler {
     client: Client,
-    key_shares: Arc<HashMap<String, KeyShare<Secp256k1, SecurityLevel128>>>,  // account_id -> key_share映射
+    key_shares: Arc<HashMap<String, KeyShare<Secp256k1, SecurityLevel128>>>,  // Mapping of account_id -> key_share
 }
 
 impl ParticipantHandler {
@@ -75,8 +75,7 @@ impl Participant for ParticipantHandler {
         let chain = Chain::try_from(req.chain).map_err(|_| Status::internal("Invalid chain"))?;
         let tx = req.data;
         let account_id = req.account_id;
-
-        // 验证account_id不能为空
+        
         if account_id.is_empty() {
             return Err(Status::invalid_argument("account_id cannot be empty"));
         }
@@ -84,7 +83,7 @@ impl Participant for ParticipantHandler {
         info!("Processing sign request - tx_id: {}, chain: {:?}, account_id: {}", 
               tx_id, chain, account_id);
 
-        // 通过account_id获取对应的key_share和index
+        // Get the corresponding key_share and index through account_id
         let (key_share, signing_index) = self.get_key_share_by_account_id(&account_id)
             .map_err(|e| {
                 log::error!("Failed to get key share for account_id {}: {}", account_id, e);
@@ -93,8 +92,8 @@ impl Participant for ParticipantHandler {
 
         let signing = Signing::new(&self.client, tx_id);
 
-        // 使用account_id对应的key_share和index进行签名
-        // 注意：现在不再需要derivation_path，因为每个account_id对应的key_share已经是派生后的
+        // Use the key_share and index corresponding to account_id for signing
+        // Note: derivation_path is no longer needed because each account_id corresponds to a pre-derived key_share
         let (r, s, v) = signing
             .sign_tx(signing_index, &execution_id, &tx, key_share.clone(), chain, None)
             .await

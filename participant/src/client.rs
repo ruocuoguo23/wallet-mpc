@@ -66,8 +66,8 @@ impl Client {
         info!("Creating new client for address: {}", address);
 
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(60))  // 完全禁用超时，SSE 需要长连接
-            .tcp_keepalive(Duration::from_secs(60))  // tcp_keepalive 接受 Duration，不是 Option
+            .timeout(Duration::from_secs(60))  // Fully disable timeout, SSE requires long connections
+            .tcp_keepalive(Duration::from_secs(60))  // tcp_keepalive accepts Duration, not Option
             .build()
             .context("Failed to build HTTP client")?;
 
@@ -161,9 +161,9 @@ impl Room {
 
         let response = self.client
             .get(&endpoint)
-            .header("Accept", "text/event-stream")  // 明确接受 SSE
-            .header("Cache-Control", "no-cache")     // 禁用缓存
-            .header("Connection", "keep-alive")      // 保持连接
+            .header("Accept", "text/event-stream")  // Explicitly accept SSE
+            .header("Cache-Control", "no-cache")     // Disable caching
+            .header("Connection", "keep-alive")      // Keep the connection alive
             .send()
             .await
             .map_err(|e| {

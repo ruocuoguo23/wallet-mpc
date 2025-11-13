@@ -18,7 +18,7 @@ use cggmp21::supported_curves::Secp256k1;
 #[derive(Debug, Clone)]
 pub struct KeyShareData {
     pub account_id: String,
-    pub key_share_data: String, // JSON格式的key share数据
+    pub key_share_data: String, // JSON-formatted key share data
 }
 
 /// Simplified config structure for direct initialization (no file dependency)
@@ -194,7 +194,7 @@ impl Signer {
             account_id,
         };
 
-        // Send sign requests to all participants (需要达到threshold数量)
+        // Send sign requests to all participants (must reach threshold)
         info!("Sending sign requests to {} participants...", self.all_participant_clients.len());
         
         let futures = self.all_participant_clients.iter_mut().take(self.config.threshold as usize).map(|client| {

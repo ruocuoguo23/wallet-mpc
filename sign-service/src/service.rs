@@ -30,20 +30,20 @@ pub fn load_key_shares(key_share_file: &str) -> Result<HashMap<String, KeyShare<
 pub async fn run_services(config: SignServiceConfig) -> Result<()> {
     info!("Initializing services...");
     
-    // 从配置文件中加载key shares
+    // Load key shares from the configuration file
     let key_shares = load_key_shares(&config.mpc.key_share_file)
         .context("Failed to load key shares")?;
     
-    // 记录加载的key shares信息
+    // Log the loaded key shares information
     let key_share_count = key_shares.len();
     let account_ids: Vec<String> = key_shares.keys().cloned().collect();
     
-    // 创建SSE server
+    // Create SSE server
     let sse_config = config.to_sse_config();
     let sse_server = SseServer::new(sse_config);
     info!("SSE Server created - {}:{}", config.server.sse.host, config.server.sse.port);
 
-    // 创建Participant server 使用新的接口
+    // Create Participant server using the new interface
     let sse_url = format!("http://{}:{}", config.server.sse.host, config.server.sse.port);
     let participant_server = ParticipantServer::new(
         &sse_url,

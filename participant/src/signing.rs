@@ -45,7 +45,7 @@ impl Signing {
         tx: &[u8],
         key_share: KeyShare<T, SecurityLevel128>,
         chain: Chain,
-        _derivation_path: Option<Vec<u32>>, // 保留参数兼容性但不使用，因为key_share已经是预先派生的
+        _derivation_path: Option<Vec<u32>>, // Reserved for compatibility, not used because key_share is pre-derived
     ) -> Result<(Vec<u8>, Vec<u8>, u32)>
     where
         T: Curve + CurveParams + cggmp21::hd_wallet::slip10::SupportedCurve,
@@ -65,7 +65,7 @@ impl Signing {
         // Indexes must be issued on room creation and stored in DB.
         let signing = cggmp21::signing(eid, index, &[0, 1], &key_share);
         
-        // 不再需要HD钱包派生，因为key_share已经是预先派生的
+        // No need for HD wallet derivation anymore because key_share is pre-derived
         log::info!("Using pre-derived key share (account-specific)");
         
         let signature = signing
@@ -88,8 +88,8 @@ impl Signing {
         // Upper layers can convert this to chain-specific format (e.g., EIP-155 for Ethereum)
         let recovery_id = match chain {
             Chain::Ethereum => {
-                // 直接使用预先派生的key_share中的shared_public_key
-                // 这个public_key已经对应特定的account_id
+                // Directly use the shared_public_key in the pre-derived key_share
+                // This public_key already corresponds to a specific account_id
                 let public_key = key_share.shared_public_key;
 
                 // Print public key information
@@ -148,7 +148,7 @@ impl Signing {
                     Err(_) => {
                         log::warn!("⚠️ Primary recovery ID calculation failed, trying manual recovery");
 
-                        // 手动尝试 recovery ID 0 和 1
+                        // Manually attempt recovery ID 0 and 1
                         for test_id in [0u8, 1u8] {
                             if let Ok(recovery_id) = RecoveryId::try_from(test_id) {
                                 if let Ok(recovered_key) = VerifyingKey::recover_from_prehash(
@@ -160,7 +160,7 @@ impl Signing {
                                     let recovered_bytes = recovered_key.to_encoded_point(false);
                                     let expected_bytes = public_key.to_bytes(false);
 
-                                    // 正确比较两个字节数组
+                                    // Correctly compare two byte arrays
                                     if recovered_bytes.as_bytes() == expected_bytes.as_ref() {
                                         log::info!("✅ Correct recovery ID found through manual testing: {}", test_id);
                                         return Ok((r_bytes.to_vec(), s_bytes.to_vec(), test_id as u32));

@@ -11,8 +11,8 @@ use log::info;
 fn load_key_shares_from_files() -> Result<HashMap<String, KeyShare<Secp256k1, SecurityLevel128>>, Box<dyn std::error::Error>> {
     let mut key_shares = HashMap::new();
     
-    // 扫描当前目录中的所有key_share_*.json文件
-    for i in 1..=10 {  // 假设最多支持10个key_share文件
+    // Scan all key_share_*.json files in the current directory
+    for i in 1..=10 {  // Assume up to 10 key_share files are supported
         let filename = format!("key_share_{}.json", i);
         if Path::new(&filename).exists() {
             info!("   Loading key share from file: {}", filename);
@@ -23,7 +23,7 @@ fn load_key_shares_from_files() -> Result<HashMap<String, KeyShare<Secp256k1, Se
             let key_share: KeyShare<Secp256k1, SecurityLevel128> = serde_json::from_str(&key_share_json)
                 .map_err(|e| format!("Key share deserialization failed for {}: {}", filename, e))?;
 
-            // 使用participant_index作为默认的account_id
+            // Use participant_index as the default account_id
             let participant_index = key_share.core.i;
             let default_account_id = format!("account_{}", participant_index);
             
@@ -52,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load configuration from environment
     let config = AppConfig::from_env()
         .map_err(|e| format!("Failed to load configuration: {}", e))?;
-    
+
     // Load key shares from files (for backward compatibility in this demo)
     let key_shares = load_key_shares_from_files()?;
     

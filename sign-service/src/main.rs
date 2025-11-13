@@ -9,16 +9,16 @@ use crate::service::run_services;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 获取配置文件路径，默认使用 config/sign-service.yaml
+    // Get the configuration file path, default to config/sign-service.yaml
     let config_path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "config/sign-service.yaml".to_string());
 
-    // 加载配置文件
+    // Load the configuration file
     let config = SignServiceConfig::load_from_file(&config_path)
         .context("Failed to load configuration")?;
 
-    // 设置日志
+    // Set up logging
     setup_logging(&config.logging)
         .context("Failed to setup logging")?;
 
@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
     info!("Participant index: {}", config.server.participant.index);
     info!("MPC configuration: threshold={}, total_participants={}", config.mpc.threshold, config.mpc.total_participants);
 
-    // 运行服务（包含信号处理和优雅退出）
+    // Run services (including signal handling and graceful shutdown)
     run_services(config).await?;
 
     info!("Sign Service shut down successfully");

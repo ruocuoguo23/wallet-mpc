@@ -121,6 +121,7 @@ impl Db {
     }
 
     pub async fn get_room_or_create_for_index(&self, room_id: &str) -> Arc<Room> {
+        // Check if the room already exists
         let rooms = self.rooms.read().await;
         if let Some(room) = rooms.get(room_id) {
             debug!("Found existing room '{}'", room_id);
@@ -128,6 +129,7 @@ impl Db {
         }
         drop(rooms);
 
+        // If the room does not exist, create it
         let mut rooms = self.rooms.write().await;
         match rooms.entry(room_id.to_owned()) {
             Entry::Occupied(entry) => {
@@ -161,6 +163,7 @@ impl Room {
     }
 
     pub async fn publish(self: &Arc<Self>, message: String) {
+        // Add the message to the room's message list
         let mut messages = self.messages.write().await;
         let message_id = messages.len();
         messages.push(message);
@@ -171,10 +174,12 @@ impl Room {
             message_id, subscriber_count
         );
 
+        // Notify all subscribers about the new message
         self.message_appeared.notify_waiters();
     }
 
     pub fn subscribe(self: Arc<Self>, last_seen_msg: Option<u16>) -> Subscription {
+        // Create a new subscription for the room
         let new_count = self.subscribers.fetch_add(1, Ordering::SeqCst) + 1;
         let next_event = last_seen_msg.map(|i| i + 1).unwrap_or(0);
 
@@ -190,6 +195,7 @@ impl Room {
     }
 
     pub fn issue_unique_idx(&self) -> u16 {
+        // Generate a unique index for the room
         self.next_idx.fetch_add(1, Ordering::Relaxed)
     }
 }
@@ -202,6 +208,7 @@ pub struct Subscription {
 
 impl Subscription {
     pub async fn next(&mut self) -> (u16, String) {
+        // Wait for the next message to be available
         loop {
             let history = self.room.messages.read().await;
             if let Some(msg) = history.get(usize::from(self.next_event)) {
@@ -223,6 +230,7 @@ impl Subscription {
 
 impl Drop for Subscription {
     fn drop(&mut self) {
+        // Handle subscription cleanup when dropped
         let remaining = self.room.subscribers.fetch_sub(1, Ordering::SeqCst) - 1;
         debug!("Subscription dropped, remaining subscribers: {}", remaining);
 
@@ -251,6 +259,7 @@ async fn subscribe(
         room_id, last_seen_msg
     );
 
+    // Create a new subscription for the room
     let room = db.get_room_or_create_for_index(&room_id).await;
     let subscribers = room.subscribers.load(Ordering::SeqCst);
     let subscription = room.subscribe(last_seen_msg);
@@ -260,6 +269,7 @@ async fn subscribe(
         room_id, subscribers
     );
 
+    // Convert the subscription into an SSE stream
     let stream = subscription_to_stream(subscription);
 
     Ok(Sse::from_stream(stream)
@@ -277,6 +287,7 @@ async fn issue_idx(
 
     info!("Issued unique index {} for room '{}'", idx, room_id);
 
+    // Return the unique index as a JSON response
     Ok(web::Json(IssuedUniqueIdx { unique_idx: idx }))
 }
 
@@ -294,14 +305,17 @@ async fn broadcast(
         message.len()
     );
 
+    // Publish the message to the room
     room.publish(message).await;
 
     debug!("Message broadcast complete for room '{}'", room_id);
 
+    // Return an HTTP 200 OK response
     Ok(HttpResponse::Ok().finish())
 }
 
 fn extract_last_event_id(req: &HttpRequest) -> Option<u16> {
+    // Extract the Last-Event-ID header from the request
     req.headers()
         .get("Last-Event-ID")
         .and_then(|header| header.to_str().ok())
@@ -313,8 +327,7 @@ fn subscription_to_stream(
 ) -> impl Stream<Item = Result<sse::Event, actix_web::Error>> {
     async_stream::stream! {
         loop {
-            // Check if the client has disconnected by yielding a test event
-            // If the client is gone, this will cause the stream to be dropped
+            // Deliver the next message to the subscriber
             let (id, msg) = subscription.next().await;
             {
                 let event = sse::Event::Data(

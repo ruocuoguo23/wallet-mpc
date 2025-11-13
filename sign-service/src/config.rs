@@ -86,4 +86,3 @@ pub fn setup_logging(config: &LoggingConfig) -> Result<()> {
     info!("Logging initialized with level: {}", config.level);
     Ok(())
 }
-

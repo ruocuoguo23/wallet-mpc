@@ -16,14 +16,14 @@ dictionary SignatureResult {
 
 dictionary KeyShare {
     string account_id;
-    string key_share_data;  // JSON格式的key share数据
+    string key_share_data;  // JSON-formatted key share data
 };
 
 dictionary MpcConfig {
     string local_participant_host;
     u16 local_participant_port;
     u16 local_participant_index;
-    sequence<KeyShare> key_shares;  // 多个key share数据
+    sequence<KeyShare> key_shares;  // Multiple key share data
     string sign_service_host;
     u16 sign_service_port;
     string sse_host;
@@ -40,6 +40,6 @@ interface MpcSigner {
     [Throws=MpcError]
     void initialize();
     [Throws=MpcError]
-    SignatureResult sign_data(sequence<u8> data, string account_id);  // 使用account_id替代derivation_path
+    SignatureResult sign_data(sequence<u8> data, string account_id);  // Use account_id instead of derivation_path
     void shutdown();
 };

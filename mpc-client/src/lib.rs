@@ -43,7 +43,7 @@ impl From<InternalSignatureResult> for SignatureResult {
 #[derive(Debug, Clone)]
 pub struct KeyShare {
     pub account_id: String,
-    pub key_share_data: String,
+    pub key_share_data: String, // JSON-formatted key share data
 }
 
 impl From<KeyShare> for KeyShareData {
@@ -61,7 +61,7 @@ pub struct MpcConfig {
     pub local_participant_host: String,
     pub local_participant_port: u16,
     pub local_participant_index: u16,
-    pub key_shares: Vec<KeyShare>,  // 使用key_shares替代key_share_file
+    pub key_shares: Vec<KeyShare>,  // Use key_shares instead of key_share_file
     pub sign_service_host: String,
     pub sign_service_port: u16,
     pub sse_host: String,
@@ -94,7 +94,6 @@ impl From<MpcConfig> for SignerConfig {
 /// MPC Signer for UniFFI
 pub struct MpcSigner {
     signer: Arc<Mutex<Option<Signer>>>,
-    config: MpcConfig,
     runtime: Arc<Runtime>,
 }
 
@@ -138,7 +137,6 @@ impl MpcSigner {
 
         Ok(Self {
             signer: signer_mutex,
-            config,
             runtime: Arc::new(runtime),
         })
     }
