@@ -2,7 +2,7 @@ mod config;
 mod service;
 
 use anyhow::{Context, Result};
-use log::{info, error};
+use log::info;
 
 use crate::config::{SignServiceConfig, setup_logging};
 use crate::service::run_services;
@@ -29,13 +29,10 @@ async fn main() -> Result<()> {
     info!("Participant index: {}", config.server.participant.index);
     info!("MPC configuration: threshold={}, total_participants={}", config.mpc.threshold, config.mpc.total_participants);
 
-    // 运行服务
-    if let Err(e) = run_services(config).await {
-        error!("Service execution failed: {}", e);
-        std::process::exit(1);
-    }
+    // 运行服务（包含信号处理和优雅退出）
+    run_services(config).await?;
 
-    info!("Sign Service shutting down");
+    info!("Sign Service shut down successfully");
     Ok(())
 }
 

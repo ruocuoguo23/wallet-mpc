@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use log::{info, error};
-use tokio::try_join;
+use tokio::signal;
 
 use sse::SseServer;
 use participant::ParticipantServer;
@@ -62,26 +62,71 @@ pub async fn run_services(config: SignServiceConfig) -> Result<()> {
 
     info!("Starting both servers concurrently...");
 
-    // 并发运行两个服务器
-    let result: Result<((), ()), anyhow::Error> = try_join!(
-        async {
-            sse_server.start().await
-                .context("SSE server failed")
-        },
-        async {
-            participant_server.start().await
-                .map_err(|e| anyhow::anyhow!("Participant server failed: {}", e))
-        }
-    );
+    // Clone servers for the tasks
+    let sse_server_clone = sse_server.clone();
+    let participant_server_clone = participant_server.clone();
 
-    match result {
-        Ok(_) => {
-            info!("Both servers have stopped successfully");
-            Ok(())
+    // Start SSE server in a separate task
+    let sse_task = tokio::spawn(async move {
+        sse_server_clone.start().await
+            .context("SSE server failed")
+    });
+
+    // Start Participant server in a separate task
+    let participant_task = tokio::spawn(async move {
+        participant_server_clone.start().await
+            .map_err(|e| anyhow::anyhow!("Participant server failed: {}", e))
+    });
+
+    // Wait for shutdown signal (Ctrl+C or SIGTERM)
+    tokio::select! {
+        _ = signal::ctrl_c() => {
+            info!("Received Ctrl+C signal, initiating graceful shutdown...");
         }
-        Err(e) => {
-            error!("One or both servers failed: {}", e);
-            Err(e)
+        _ = async {
+            #[cfg(unix)]
+            {
+                let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
+                    .expect("Failed to setup SIGTERM handler");
+                sigterm.recv().await
+            }
+            #[cfg(not(unix))]
+            {
+                std::future::pending::<()>().await
+            }
+        } => {
+            info!("Received SIGTERM signal, initiating graceful shutdown...");
         }
     }
+
+    // Gracefully shutdown both servers
+    info!("Shutting down SSE server...");
+    if let Err(e) = sse_server.shutdown().await {
+        error!("Error shutting down SSE server: {}", e);
+    }
+
+    info!("Shutting down Participant server...");
+    if let Err(e) = participant_server.shutdown().await {
+        error!("Error shutting down Participant server: {}", e);
+    }
+
+    // Wait for both tasks to complete
+    info!("Waiting for server tasks to complete...");
+    
+    let (sse_result, participant_result) = tokio::join!(sse_task, participant_task);
+
+    match sse_result {
+        Ok(Ok(())) => info!("SSE server stopped successfully"),
+        Ok(Err(e)) => error!("SSE server error: {}", e),
+        Err(e) => error!("SSE server task panicked: {}", e),
+    }
+
+    match participant_result {
+        Ok(Ok(())) => info!("Participant server stopped successfully"),
+        Ok(Err(e)) => error!("Participant server error: {}", e),
+        Err(e) => error!("Participant server task panicked: {}", e),
+    }
+
+    info!("Both servers have been shut down");
+    Ok(())
 }

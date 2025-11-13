@@ -4,8 +4,10 @@ mod signing;
 
 use std::error::Error;
 use std::collections::HashMap;
+use std::sync::Arc;
 use log::info;
 
+use tokio::sync::Mutex;
 use cggmp21::KeyShare;
 use cggmp21::security_level::SecurityLevel128;
 use cggmp21::supported_curves::Secp256k1;
@@ -19,15 +21,18 @@ pub use config::{AppConfig, ParticipantConfig, SSEConfig};
 pub use signing::Signing;
 
 /// Main participant server structure that can be used as a library
+#[derive(Clone)]
 pub struct ParticipantServer {
     server_address: String,
-    handler: ParticipantHandler,
+    handler: Arc<ParticipantHandler>,
+    server_handle: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
 }
 
 /// Internal participant handler
+#[derive(Clone)]
 pub struct ParticipantHandler {
     client: Client,
-    key_shares: HashMap<String, KeyShare<Secp256k1, SecurityLevel128>>,  // account_id -> key_share映射
+    key_shares: Arc<HashMap<String, KeyShare<Secp256k1, SecurityLevel128>>>,  // account_id -> key_share映射
 }
 
 impl ParticipantHandler {
@@ -43,7 +48,7 @@ impl ParticipantHandler {
         
         Ok(Self {
             client,
-            key_shares,
+            key_shares: Arc::new(key_shares),
         })
     }
     
@@ -118,26 +123,59 @@ impl ParticipantServer {
 
         Ok(Self {
             server_address,
-            handler,
+            handler: Arc::new(handler),
+            server_handle: Arc::new(Mutex::new(None)),
         })
     }
 
     /// Start the participant server
-    pub async fn start(self) -> Result<(), Box<dyn Error>> {
+    pub async fn start(&self) -> Result<(), Box<dyn Error>> {
         let addr = self.server_address.parse()
             .map_err(|e| format!("Invalid server address '{}': {}", self.server_address, e))?;
 
         info!("Starting gRPC server on address: {}", addr);
 
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+
+        // Store shutdown sender
+        {
+            let mut handle = self.server_handle.lock().await;
+            *handle = Some(tx);
+        }
+
+        let handler = self.handler.clone();
+
         Server::builder()
-            .add_service(GrpcParticipantServer::new(self.handler))
-            .serve(addr)
+            .add_service(GrpcParticipantServer::new(handler.as_ref().clone()))
+            .serve_with_shutdown(addr, async {
+                rx.await.ok();
+                info!("Participant server received shutdown signal");
+            })
             .await
             .map_err(|e| format!("Server failed: {}", e))?;
 
         info!("MPC participant service stopped");
 
         Ok(())
+    }
+
+    /// Gracefully shutdown the participant server
+    ///
+    /// This method will stop accepting new connections and wait for existing
+    /// requests to complete before shutting down.
+    pub async fn shutdown(&self) -> Result<(), Box<dyn Error>> {
+        info!("Initiating graceful shutdown of Participant server");
+
+        let mut handle = self.server_handle.lock().await;
+        if let Some(tx) = handle.take() {
+            info!("Stopping Participant server...");
+            let _ = tx.send(());
+            info!("Participant server shutdown signal sent");
+            Ok(())
+        } else {
+            log::warn!("Participant server handle not found, server may not be running");
+            Ok(())
+        }
     }
 
     /// Get the server address

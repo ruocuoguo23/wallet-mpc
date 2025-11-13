@@ -10,18 +10,21 @@ use actix_web::Responder;
 use actix_web::{
     App, HttpRequest, HttpResponse, HttpServer, Result as ActixResult, middleware::Logger, web,
 };
+use actix_web::dev::ServerHandle;
 use actix_web_lab::sse::{self, Sse};
 use futures_util::Stream;
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::{Notify, RwLock, Mutex};
 
 pub use config::{AppConfig, SSEConfig};
 
 /// Main structure of SSE Server, encapsulating all core functions
+#[derive(Clone)]
 pub struct SseServer {
     db: web::Data<Db>,
     config: AppConfig,
+    server_handle: Arc<Mutex<Option<ServerHandle>>>,
 }
 
 impl SseServer {
@@ -30,6 +33,7 @@ impl SseServer {
         Self {
             db: web::Data::new(Db::empty()),
             config,
+            server_handle: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -40,14 +44,15 @@ impl SseServer {
     }
 
     /// Start SSE Server
-    pub async fn start(self) -> anyhow::Result<()> {
+    pub async fn start(&self) -> anyhow::Result<()> {
         let address = format!("{}:{}", self.config.sse.host, self.config.sse.port);
         
         info!("Starting SSE server at {}", address);
 
         let db = self.db.clone();
+        let server_handle = self.server_handle.clone();
 
-        HttpServer::new(move || {
+        let server = HttpServer::new(move || {
             App::new()
                 .app_data(db.clone())
                 .app_data(
@@ -62,9 +67,34 @@ impl SseServer {
                 .route("/rooms/{room_id}/broadcast", web::post().to(broadcast))
         })
         .bind(address)?
-        .run()
-        .await
-        .map_err(anyhow::Error::from)
+        .run();
+
+        // Store the server handle for graceful shutdown
+        {
+            let mut handle = server_handle.lock().await;
+            *handle = Some(server.handle());
+        }
+
+        server.await.map_err(anyhow::Error::from)
+    }
+
+    /// Gracefully shutdown the SSE server
+    ///
+    /// This method will stop accepting new connections and wait for existing
+    /// connections to complete before shutting down.
+    pub async fn shutdown(&self) -> anyhow::Result<()> {
+        info!("Initiating graceful shutdown of SSE server");
+
+        let mut handle = self.server_handle.lock().await;
+        if let Some(server_handle) = handle.take() {
+            info!("Stopping SSE server...");
+            server_handle.stop(true).await;
+            info!("SSE server stopped successfully");
+            Ok(())
+        } else {
+            log::warn!("Server handle not found, server may not be running");
+            Ok(())
+        }
     }
 
     /// Get database instance (for custom handling)
@@ -319,4 +349,51 @@ mod tests {
         // Should return the same room instance
         assert!(Arc::ptr_eq(&room1, &room2));
     }
+
+    #[test]
+    fn test_sse_server_creation() {
+        let config = AppConfig {
+            sse: SSEConfig {
+                host: "127.0.0.1".to_string(),
+                port: 8080,
+            },
+        };
+
+        let server = SseServer::new(config);
+        assert_eq!(server.config().sse.host, "127.0.0.1");
+        assert_eq!(server.config().sse.port, 8080);
+    }
+
+    #[test]
+    fn test_sse_server_clone() {
+        let config = AppConfig {
+            sse: SSEConfig {
+                host: "127.0.0.1".to_string(),
+                port: 8080,
+            },
+        };
+
+        let server1 = SseServer::new(config);
+        let server2 = server1.clone();
+
+        // Both servers should share the same Arc for server_handle
+        assert_eq!(server1.config().sse.port, server2.config().sse.port);
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_without_start() {
+        let config = AppConfig {
+            sse: SSEConfig {
+                host: "127.0.0.1".to_string(),
+                port: 8080,
+            },
+        };
+
+        let server = SseServer::new(config);
+
+        // Calling shutdown without starting should not panic
+        let result = server.shutdown().await;
+        assert!(result.is_ok());
+    }
+
 }
