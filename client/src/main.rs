@@ -39,22 +39,31 @@ fn load_mpc_config(config_path: &str) -> Result<MpcConfig> {
         .ok_or_else(|| anyhow::anyhow!("Missing local_participant.index"))?
         as u16;
     
-    // Read key share file content
+    // Read key shares file content - now supports dictionary format with account_id as key
     let key_share_content = fs::read_to_string(key_share_file)
         .with_context(|| format!("Failed to read key share file: {}", key_share_file))?;
     
-    // For this demo, we create multiple account_ids from the same key_share
-    // In production, you would have different key_shares for different derivation paths
-    let mut key_shares = Vec::new();
+    // Parse the key shares dictionary from JSON
+    let key_shares_dict: std::collections::HashMap<String, serde_json::Value> = 
+        serde_json::from_str(&key_share_content)
+        .with_context(|| format!("Failed to parse key shares file as JSON: {}", key_share_file))?;
     
-    // Create multiple account_ids representing different HD wallet addresses
-    // Each would normally have its own pre-derived key_share
-    let account_id = format!("{}", 1);
-    key_shares.push(KeyShare {
-        account_id: account_id.clone(),
-        key_share_data: key_share_content.clone(), // In production, each would be different
-    });
-    info!("Added account_id: {}", account_id);
+    // Convert to KeyShare vector format expected by mpc-client
+    let mut key_shares = Vec::new();
+    for (account_id, key_share_data) in key_shares_dict {
+        let key_share_json = serde_json::to_string(&key_share_data)
+            .with_context(|| format!("Failed to serialize key share for account_id: {}", account_id))?;
+        
+        key_shares.push(KeyShare {
+            account_id: account_id.clone(),
+            key_share_data: key_share_json,
+        });
+        info!("Added account_id: {}", account_id);
+    }
+    
+    if key_shares.is_empty() {
+        return Err(anyhow::anyhow!("No key shares found in file: {}", key_share_file));
+    }
     
     Ok(MpcConfig {
         local_participant_host: local_participant.get("host")
@@ -155,6 +164,11 @@ async fn main() -> Result<()> {
         println!("  - {}", key_share.account_id);
     }
 
+    // Get the first available account_id before moving mpc_config
+    let account_id = mpc_config.key_shares.get(0)
+        .map(|ks| ks.account_id.clone())
+        .ok_or_else(|| anyhow::anyhow!("No key shares available"))?;
+
     // Initialize MpcSigner with MpcConfig
     let signer = match MpcSigner::new(mpc_config) {
         Ok(s) => {
@@ -200,12 +214,8 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Use account_id instead of derivation path
-    // This represents a pre-derived HD wallet address
-    let account_id = "1".to_string(); // Using first account for demo
-    
     println!("\n🗝️  Using Account ID Architecture");
-    println!("Account ID: {}", account_id);
+    println!("Account ID: {} (from loaded key shares)", account_id);
     println!("📝 Note: Each account_id represents a pre-derived HD wallet key_share");
     println!("   No runtime derivation needed - key_shares are pre-generated for each path");
 

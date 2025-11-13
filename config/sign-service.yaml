@@ -21,4 +21,4 @@ logging:
 mpc:
   threshold: 2
   total_participants: 3
-  key_share_file: "key_share_1.json"  # Will be determined by participant.index
+  key_share_file: "service_key_shares.json"

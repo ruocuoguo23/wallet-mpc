@@ -4,7 +4,7 @@ local_participant:
   host: "127.0.0.1"
   port: 50052  # 与sign-service的participant端口不冲突
   index: 1     # 本客户端作为participant 1
-  key_share_file: "key_share_2.json"  # 对应index 1的key share
+  key_share_file: "client_key_shares.json"  # 对应index 1的key share
 
 # 远程sign-service配置
 remote_services:

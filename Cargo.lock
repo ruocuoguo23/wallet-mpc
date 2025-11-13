@@ -1710,6 +1710,7 @@ dependencies = [
  "k256",
  "log",
  "mpc-client",
+ "serde_json",
  "serde_yaml",
  "tokio",
 ]
