@@ -6,6 +6,7 @@ members = [
     "participant",
     "proto",
     "sse",
+    "key-gen",
 ]
 resolver = "2"
 

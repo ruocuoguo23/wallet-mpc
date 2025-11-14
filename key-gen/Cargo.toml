@@ -1,0 +1,20 @@
+[package]
+name = "key-gen"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "key-gen"
+path = "src/main.rs"
+
+[dependencies]
+cggmp21 = { version = "0.6.2", features = ["all-curves", "hd-wallet", "hd-slip10", "spof"] }
+generic-ec = "0.4"
+rand = "0.8"
+rand_dev = "0.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+hex = "0.4"
+sha2 = "0.10"
+clap = { version = "4.5", features = ["derive"] }
