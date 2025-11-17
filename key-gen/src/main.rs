@@ -4,7 +4,7 @@ use cggmp21::{
     KeyShare,
     trusted_dealer,
 };
-use generic_ec::{NonZero, SecretScalar};
+use generic_ec::{NonZero, SecretScalar, Point, Scalar};
 use rand::rngs::OsRng;
 use anyhow::{Result, Context, anyhow};
 use clap::Parser;
@@ -70,6 +70,12 @@ fn main() -> Result<()> {
     // Convert key bytes to scalar
     let secret_scalar = create_scalar_from_bytes(&child_key)?;
 
+    // Compute public key from the input child key (before secret_scalar is moved)
+    // We need to convert the bytes to a Scalar to compute the public key
+    let scalar_for_pubkey = Scalar::<Secp256k1>::from_be_bytes_mod_order(&child_key);
+    let expected_pubkey: Point<Secp256k1> = Point::generator() * &scalar_for_pubkey;
+    let expected_pubkey_hex = hex::encode(expected_pubkey.to_bytes(true));
+
     // Generate key shares using trusted dealer
     println!("\n🔐 Generating {}-of-{} MPC key shares...", args.threshold, args.n_parties);
 
@@ -81,10 +87,21 @@ fn main() -> Result<()> {
 
     println!("   ✓ Generated {} key shares", key_shares.len());
 
+    // Display and verify public keys
+    println!("\n🔍 Public Key Verification:");
+    println!("   Expected public key (from input):  {}", expected_pubkey_hex);
+
     // Display shared public key
     let shared_pubkey = &key_shares[0].core.shared_public_key;
     let shared_pubkey_hex = hex::encode(shared_pubkey.to_bytes(true));
-    println!("   ✓ Shared public key: {}", shared_pubkey_hex);
+    println!("   MPC shared public key (generated): {}", shared_pubkey_hex);
+
+    // Verify they match
+    if expected_pubkey_hex == shared_pubkey_hex {
+        println!("   ✅ MATCH: MPC key shares generated correctly!");
+    } else {
+        return Err(anyhow!("❌ MISMATCH: Public keys don't match! Key generation may have failed."));
+    }
 
     // Save key shares to files
     println!("\n💾 Saving key shares to files...");

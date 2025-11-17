@@ -81,7 +81,7 @@ cargo run -- \
 ```bash
 # 账户 0
 cargo run -- \
-  --child-key "a1b2c3d4e5f6789012345678901234567890123456789012345678901234abcd" \
+  --child-key "620fbd16fdb702ad02c43b9657c1acd0b399d8903e0f321b46ecd81bb69f59c0" \
   --account-id "m/44'/60'/0'/0/0"
 
 # 账户 1
