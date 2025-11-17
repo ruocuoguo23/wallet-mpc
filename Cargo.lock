@@ -3313,10 +3313,7 @@ dependencies = [
  "generic-ec",
  "hex",
  "rand 0.8.5",
- "rand_dev",
- "serde",
  "serde_json",
- "sha2",
 ]
 
 [[package]]
@@ -4223,17 +4220,6 @@ checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
 dependencies = [
  "getrandom 0.3.4",
  "serde",
-]
-
-[[package]]
-name = "rand_dev"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbee97c27dada05f03db49ffe6516872f6c926e0fd525f9ce0cb3c051adf145c"
-dependencies = [
- "hex",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
 ]
 
 [[package]]

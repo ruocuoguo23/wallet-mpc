@@ -129,23 +129,11 @@ fn validate_args(args: &Args) -> Result<()> {
 
 /// Create a valid scalar from bytes
 fn create_scalar_from_bytes(bytes: &[u8; 32]) -> Result<NonZero<SecretScalar<Secp256k1>>> {
-    use sha2::{Sha256, Digest};
-    use rand::{SeedableRng, rngs::StdRng};
+    let scalar = SecretScalar::<Secp256k1>::from_be_bytes(bytes)
+        .map_err(|_| anyhow!("Invalid private key"))?;
 
-    // Create deterministic scalar based on input bytes
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hasher.update(b"mpc_key_share_scalar");
-    let hash = hasher.finalize();
-
-    // Convert hash to seed for deterministic RNG
-    let seed: [u8; 32] = hash.into();
-    let mut rng = StdRng::from_seed(seed);
-
-    // Generate scalar using the deterministic RNG
-    let scalar = NonZero::<SecretScalar<Secp256k1>>::random(&mut rng);
-
-    Ok(scalar)
+    NonZero::from_secret_scalar(scalar)
+        .ok_or_else(|| anyhow!("Private key cannot be zero"))
 }
 
 /// Save key shares to separate files, supporting append mode
