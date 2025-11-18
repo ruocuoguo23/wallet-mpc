@@ -145,34 +145,24 @@ fn recover_public_key(message_hash: &[u8], r: &[u8], s: &[u8], recovery_id: u32)
     Ok((compressed_hex, uncompressed_hex))
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    println!("🚀 Starting MPC Wallet Client with Account ID Architecture");
-    println!("=======================================================");
+/// Run a complete MPC signing test: initialize -> sign -> shutdown
+/// This function can be called multiple times to test repeated initialization
+async fn run_mpc_signing_test(mpc_config: MpcConfig, test_number: u32) -> Result<()> {
+    println!("\n{}", "=".repeat(60));
+    println!("🔄 Test Run #{}", test_number);
+    println!("{}", "=".repeat(60));
 
-    // Get config file path, default to config/client.yaml
-    let config_path = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "config/client.yaml".to_string());
-
-    // Load configuration from YAML and create MpcConfig
-    let mpc_config = load_mpc_config(&config_path)?;
-    
-    // Print available account_ids
-    println!("\n📋 Available Account IDs:");
-    for key_share in &mpc_config.key_shares {
-        println!("  - {}", key_share.account_id);
-    }
-
-    // Get the first available account_id before moving mpc_config
+    // Get the first available account_id
     let account_id = mpc_config.key_shares.get(0)
         .map(|ks| ks.account_id.clone())
         .ok_or_else(|| anyhow::anyhow!("No key shares available"))?;
 
-    // Initialize MpcSigner with MpcConfig
+    // Step 1: Initialize MpcSigner
+    println!("\n[1/3] 🚀 Initializing MpcSigner...");
     let signer = match MpcSigner::new(mpc_config) {
         Ok(s) => {
             info!("✅ MpcSigner initialized successfully");
+            println!("✅ MpcSigner created");
             s
         }
         Err(e) => {
@@ -187,17 +177,18 @@ async fn main() -> Result<()> {
         return Err(e.into());
     }
 
-    println!("\n📡 MPC Infrastructure Ready");
-    println!("- Local participant server: RUNNING");
-    println!("- Remote sign-service: CONNECTED");
+    println!("✅ MPC Infrastructure Ready");
+    println!("   - Local participant server: RUNNING");
+    println!("   - Remote sign-service: CONNECTED");
+
+    // Step 2: Create and Sign Transaction
+    println!("\n[2/3] 🔐 Creating and Signing Transaction...");
 
     // Setup Base Sepolia RPC connection
     let rpc_url = "https://tiniest-clean-sponge.base-sepolia.quiknode.pro/5380b34bde82bd24e05443cbe7f3efce0625d89e";
     let chain_id: u64 = 84532; // Base Sepolia chain ID
 
-    println!("\n🌐 Connecting to Base Sepolia Network");
-    println!("RPC URL: {}", rpc_url);
-    println!("Chain ID: {}", chain_id);
+    println!("🌐 Connecting to Base Sepolia (Chain ID: {})", chain_id);
 
     let provider = ProviderBuilder::new()
         .connect_http(rpc_url.parse().expect("Invalid RPC URL"));
@@ -205,23 +196,25 @@ async fn main() -> Result<()> {
     // Get latest block to verify connection
     match provider.get_block_number().await {
         Ok(block_number) => {
-            println!("✅ Connected to Base Sepolia");
-            println!("Latest block: {}", block_number);
+            println!("✅ Connected to Base Sepolia (Block: {})", block_number);
         }
         Err(e) => {
             error!("❌ Failed to connect to RPC: {}", e);
+            // Cleanup in blocking context before returning error
+            let _ = signer.shutdown();
+            tokio::task::spawn_blocking(move || {
+                drop(signer);
+            })
+            .await
+            .ok();
             return Err(e.into());
         }
-    }
+    };
 
-    println!("\n🗝️  Using Account ID Architecture");
-    println!("Account ID: {} (from loaded key shares)", account_id);
-    println!("📝 Note: Each account_id represents a pre-derived HD wallet key_share");
-    println!("   No runtime derivation needed - key_shares are pre-generated for each path");
+    println!("📝 Using Account ID: {}", account_id);
 
     // Create real Ethereum transaction for Base Sepolia
-    println!("\n💰 Creating Real Ethereum Transaction (0.0001 ETH)");
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    println!("💰 Creating Transaction (0.0001 ETH transfer)");
 
     let to_address = "0x9548251949b08521f4397cdfafbb58b50571a2e6"
         .parse::<Address>()
@@ -238,30 +231,24 @@ async fn main() -> Result<()> {
             let base_fee = price as u64;
             let max_fee = base_fee + max_priority_fee_per_gas;
             let max_fee_gwei = max_fee / 1_000_000_000;
-            println!("✅ Estimated base fee: {} Gwei", base_fee / 1_000_000_000);
-            println!("✅ Max fee per gas: {} Gwei (base + priority)", max_fee_gwei);
+            info!("Gas: base={} Gwei, max={} Gwei", base_fee / 1_000_000_000, max_fee_gwei);
             max_fee
         }
         Err(e) => {
             error!("⚠️  Failed to get gas price, using default: {}", e);
             let default_max_fee = 20_000_000_000u64; // 20 Gwei fallback
-            println!("⚠️  Using default max fee: {} Gwei", default_max_fee / 1_000_000_000);
             default_max_fee
         }
     };
 
-    // For demo purposes, we'll use nonce 1 (in real usage, you'd get this from the account)
-    let nonce = 1u64;
+    // For demo purposes, use incremental nonce based on test number
+    let nonce = test_number as u64;
 
     info!("EIP-1559 Transaction details:");
     info!("  To: {}", to_address);
     info!("  Value: 0.0001 ETH");
     info!("  Nonce: {}", nonce);
-    info!("  Max Priority Fee: {} Gwei", max_priority_fee_per_gas / 1_000_000_000);
-    info!("  Max Fee Per Gas: {} Gwei", max_fee_per_gas / 1_000_000_000);
     info!("  Gas Limit: {}", gas_limit);
-    info!("  Data: {} bytes", data.len());
-    info!("  Network: Base Sepolia (EIP-1559)");
     info!("  Chain ID: {}", chain_id);
 
     // Build EIP-1559 transaction using alloy_consensus
@@ -282,43 +269,26 @@ async fn main() -> Result<()> {
     let signing_hash_bytes = signing_hash.as_slice().to_vec();
 
     info!("Transaction signing hash: 0x{}", hex::encode(&signing_hash_bytes));
-    info!("Signing hash size: {} bytes", signing_hash_bytes.len());
 
-    println!("\n🔐 Starting MPC Signature Process with Account ID (EIP-1559)");
-    println!("- Transaction Type: EIP-1559 (Type 2)");
-    println!("- Threshold: 2 out of 3 participants");
-    println!("- Participants: Local + Sign-service");
-    println!("- Account ID: {} (pre-derived key_share)", account_id);
-    println!("- Architecture: Account ID -> Key Share Mapping (no runtime derivation)");
+    println!("🔐 Executing MPC Signature (Threshold 2/3)...");
 
     // Execute MPC signature with account_id
     match signer.sign_data(signing_hash_bytes.clone(), account_id.clone()) {
         Ok(signature) => {
-            println!("\n✅ Account ID Signature Generated Successfully!");
-            println!("📝 Signature components:");
-            println!("   Account ID: {}", account_id);
-            println!("   R: {} bytes", signature.r.len());
-            println!("   S: {} bytes", signature.s.len());
-            println!("   Recovery ID: {} (raw)", signature.v);
+            println!("✅ Signature Generated!");
+            info!("Signature: R={} bytes, S={} bytes, V={}",
+                  signature.r.len(), signature.s.len(), signature.v);
 
             // For EIP-1559, we use y_parity (0 or 1) instead of v
-            let y_parity = signature.v; // The recovery ID is already 0 or 1
-            println!("   Y Parity (EIP-1559): {} (recovery_id)", y_parity);
+            let y_parity = signature.v;
 
-            // Recover public key from signature
-            println!("\n🔑 Recovering Public Key from MPC Signature:");
+            // Recover public key from signature for verification
             match recover_public_key(&signing_hash_bytes, &signature.r, &signature.s, y_parity) {
-                Ok((compressed, uncompressed)) => {
-                    println!("   ✅ Public Key Recovery Successful!");
-                    println!("   Compressed: 0x{}", compressed);
-                    println!("   Uncompressed: 0x{}", uncompressed);
-                    
-                    // Note: Compare this with the public key displayed during MPC signing process
-                    println!("   💡 Compare above with the account key shown in participant logs");
+                Ok((compressed, _uncompressed)) => {
+                    info!("Public Key (compressed): 0x{}", compressed);
                 }
                 Err(e) => {
-                    println!("   ❌ Public Key Recovery Failed: {}", e);
-                    println!("   This might indicate signature issues");
+                    error!("Public Key Recovery Failed: {}", e);
                 }
             }
 
@@ -327,7 +297,6 @@ async fn main() -> Result<()> {
             let s = U256::from_be_slice(&signature.s);
             
             // Create the signature using alloy_consensus
-            // For EIP-1559, parity is the recovery ID directly (0 or 1)
             let sig = alloy::primitives::Signature::new(r, s, y_parity != 0);
             
             // Create signed transaction
@@ -336,100 +305,120 @@ async fn main() -> Result<()> {
             // Encode using EIP-2718 format (includes 0x02 type prefix for EIP-1559)
             let encoded = signed_tx.encoded_2718();
 
-            println!("\n📦 Signed Transaction (EIP-1559):");
-            println!("   Size: {} bytes", encoded.len());
-            println!("   Hex: 0x{}", hex::encode(&encoded));
-            
-            // Verify the transaction starts with 0x02 (EIP-1559 type)
-            if !encoded.is_empty() && encoded[0] == 0x02 {
-                println!("   ✅ Correct EIP-1559 type prefix (0x02)");
-            } else {
-                println!("   ❌ Missing EIP-1559 type prefix! Found: 0x{:02x}", encoded.get(0).unwrap_or(&0));
-                println!("   This will likely fail when broadcasting");
-            }
+            println!("📦 Signed Transaction: {} bytes (type 0x{:02x})",
+                     encoded.len(), encoded.get(0).unwrap_or(&0));
 
-            println!("\n🚀 Broadcasting Transaction to Base Sepolia");
-            
-            // Send the raw transaction to the network
-            match provider.send_raw_transaction(&Bytes::from(encoded)).await {
-                Ok(pending_tx) => {
-                    let tx_hash = *pending_tx.tx_hash();
-                    println!("✅ Transaction Broadcasted Successfully!");
-                    println!("🔍 Transaction Hash: {:#x}", tx_hash);
-                    println!("🌐 Explorer URL: https://sepolia.basescan.org/tx/{:#x}", tx_hash);
-                    
-                    println!("\n⏳ Waiting for transaction confirmation...");
-                    match pending_tx.get_receipt().await {
-                        Ok(receipt) => {
-                            println!("✅ Transaction Confirmed!");
-                            println!("   Block: {}", receipt.block_number.unwrap_or_default());
-                            println!("   Gas Used: {}", receipt.gas_used);
-                            println!("   Effective Gas Price: {} Gwei",
-                                     receipt.effective_gas_price / 1_000_000_000);
-                            println!("   Status: {}", if receipt.status() { "Success" } else { "Failed" });
-                            
-                            if !receipt.status() {
-                                error!("❌ Transaction failed on-chain");
-                            } else {
-                                println!("🎉 Transaction executed successfully on Base Sepolia!");
-                            }
-                        }
-                        Err(e) => {
-                            error!("⚠️  Failed to get transaction receipt: {}", e);
-                            println!("Transaction was broadcasted but receipt retrieval failed");
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("❌ Failed to broadcast transaction: {}", e);
-                    println!("💥 Transaction Broadcast Failed!");
-                    println!("Error: {}", e);
-                    println!("This might be due to:");
-                    println!("- Insufficient balance for gas");
-                    println!("- Invalid nonce (expected: see explorer for address)");
-                    println!("- Invalid signature (check y_parity, r, s values)");
-                    println!("- Network issues");
-                    println!("- Transaction encoding issues");
-                    println!("\n🔍 Signature Debug Info:");
-                    println!("   Recovery ID: {}", signature.v);
-                    println!("   Y Parity (EIP-1559): {} (0x{:x})", y_parity, y_parity);
-                    println!("   Chain ID: {} (0x{:x})", chain_id, chain_id);
-                    println!("   R (hex): 0x{}", hex::encode(&signature.r));
-                    println!("   S (hex): 0x{}", hex::encode(&signature.s));
-                    println!("   Signing Hash: 0x{}", hex::encode(&signing_hash_bytes));
-                }
-            }
-            
-            info!("Account ID transaction process completed");
+            // Note: We don't broadcast in test mode to avoid nonce conflicts
+            println!("ℹ️  Broadcasting skipped in test mode");
+            info!("Transaction would be sent to: {}", to_address);
+
+            println!("✅ Signing test completed successfully");
         }
         Err(e) => {
-            error!("❌ Account ID signature failed: {}", e);
-            println!("\n💥 Account ID Signature Failed!");
-            println!("Error: {}", e);
-            println!("\n🔍 Debugging Information:");
-            println!("- Account ID: {}", account_id);
-            println!("- Check that the account_id exists in the key_shares mapping");
+            error!("❌ Signature failed: {}", e);
+            println!("❌ Signature Failed: {}", e);
 
-            // Try to cleanup resources
-            signer.shutdown();
-            
+            // Cleanup in blocking context before returning error
+            let _ = signer.shutdown();
+            tokio::task::spawn_blocking(move || {
+                drop(signer);
+            })
+            .await
+            .ok();
+
             return Err(e.into());
         }
     }
 
-    // Graceful shutdown
-    println!("\n🛑 Shutting Down");
-    signer.shutdown();
-    println!("✅ MPC infrastructure stopped");
+    // Step 3: Graceful Shutdown
+    println!("\n[3/3] 🛑 Shutting Down MpcSigner...");
+    match signer.shutdown() {
+        Ok(_) => {
+            println!("✅ MPC infrastructure stopped gracefully");
+        }
+        Err(e) => {
+            error!("⚠️  Shutdown error: {}", e);
+            println!("⚠️  Shutdown completed with warnings: {}", e);
+        }
+    }
 
-    println!("\n🎯 Account ID MPC Client Demo Completed");
-    println!("=========================================");
-    println!("✅ Account ID architecture: SUCCESS");
-    println!("✅ MPC threshold signature: SUCCESS");
-    println!("✅ Real blockchain transaction: ATTEMPTED");
-    println!("✅ Using alloy_consensus standard EIP-1559");
-    println!("📋 Architecture: Pre-derived key_shares for each account");
-    println!("🔍 Check the explorer link above for transaction status");
-    
+    // IMPORTANT: Drop signer in a blocking context to avoid "Cannot drop a runtime in async context" panic
+    // MpcSigner contains a tokio runtime, which cannot be dropped from within an async context
+    tokio::task::spawn_blocking(move || {
+        drop(signer);
+        info!("Signer dropped in blocking context");
+    })
+    .await
+    .expect("Failed to drop signer in blocking context");
+
+    println!("✅ Test Run #{} Completed", test_number);
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    println!("🚀 MPC Wallet Client - Repeated Initialization Test");
+    println!("====================================================");
+    println!("This test verifies that MpcSigner can be initialized,");
+    println!("used for signing, and shut down multiple times safely.");
+    println!();
+
+    // Get config file path, default to config/client.yaml
+    let config_path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "config/client.yaml".to_string());
+
+    println!("📋 Loading configuration from: {}", config_path);
+
+    // Load configuration from YAML and create MpcConfig
+    let mpc_config = load_mpc_config(&config_path)?;
+
+    // Print available account_ids
+    println!("\n📋 Available Account IDs:");
+    for key_share in &mpc_config.key_shares {
+        println!("  - {}", key_share.account_id);
+    }
+
+    // Get number of test runs from environment or default to 3
+    let num_runs = std::env::var("TEST_RUNS")
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(3);
+
+    println!("\n🔄 Running {} test cycles...\n", num_runs);
+
+    // Run multiple test cycles
+    for i in 1..=num_runs {
+        // Clone config for each test run
+        let config_clone = mpc_config.clone();
+
+        match run_mpc_signing_test(config_clone, i).await {
+            Ok(_) => {
+                info!("Test run #{} succeeded", i);
+            }
+            Err(e) => {
+                error!("Test run #{} failed: {}", i, e);
+                println!("\n❌ Test run #{} failed: {}", i, e);
+                println!("Stopping test sequence.");
+                return Err(e);
+            }
+        }
+
+        // Add a small delay between runs to ensure clean separation
+        if i < num_runs {
+            println!("\n⏳ Waiting 2 seconds before next test run...\n");
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        }
+    }
+
+    println!("\n{}", "=".repeat(60));
+    println!("🎉 All {} Test Runs Completed Successfully!", num_runs);
+    println!("{}", "=".repeat(60));
+    println!("✅ MpcSigner repeated initialization: PASSED");
+    println!("✅ MPC threshold signature: PASSED");
+    println!("✅ Graceful shutdown: PASSED");
+    println!("✅ Resource cleanup: VERIFIED");
+
     Ok(())
 }

@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use log::{info, error};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 use futures::future::join_all;
+use rand::{thread_rng, Rng};
 
 use participant::ParticipantServer;
 use proto::mpc::participant_client::ParticipantClient;
@@ -48,9 +50,14 @@ pub struct SignatureResult {
 
 pub struct Signer {
     config: SignerConfig,
+    local_participant_server: Option<ParticipantServer>,
     local_participant_handle: Option<JoinHandle<Result<()>>>,
     all_participant_clients: Vec<ParticipantClient<Channel>>,
-    next_tx_id: i32,
+    /// Instance unique identifier (high 16 bits of tx_id)
+    /// Combines timestamp and random number to avoid collision across instances
+    instance_id: u16,
+    /// Incremental counter within this instance (low 16 bits of tx_id)
+    tx_counter: u16,
 }
 
 impl Signer {
@@ -63,6 +70,11 @@ impl Signer {
               config.local_participant_host, 
               config.local_participant_port,
               config.local_participant_index);
+
+        // Generate instance unique identifier to avoid tx_id collision across instances
+        // Strategy: Mix timestamp (milliseconds) with random number
+        let instance_id = Self::generate_instance_id();
+        info!("Instance ID: 0x{:04X} (for tx_id generation)", instance_id);
 
         // Connect to remote services
         let mut remote_clients = Vec::new();
@@ -82,10 +94,76 @@ impl Signer {
 
         Ok(Self {
             config,
+            local_participant_server: None,
             local_participant_handle: None,
             all_participant_clients: remote_clients,
-            next_tx_id: 1,
+            instance_id,
+            tx_counter: 0,
         })
+    }
+
+    /// Generate a unique instance identifier for this Signer instance
+    ///
+    /// Combines timestamp (milliseconds) and random number to create a 16-bit ID
+    /// that is highly unlikely to collide across different instances or restarts.
+    ///
+    /// Strategy:
+    /// - High 8 bits: Mix of timestamp milliseconds (lower bits for variation)
+    /// - Low 8 bits: Random number
+    ///
+    /// This gives us 65536 possible instance IDs with very low collision probability.
+    fn generate_instance_id() -> u16 {
+        let timestamp_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        // Take bits from timestamp that change frequently
+        // Use middle bits to avoid both slow-changing high bits and fast-cycling low bits
+        let timestamp_part = ((timestamp_ms >> 8) & 0xFF) as u16;
+
+        // Generate random byte for additional entropy
+        let random_part = thread_rng().gen::<u8>() as u16;
+
+        // Combine: high byte from timestamp, low byte random
+        let instance_id = (timestamp_part << 8) | random_part;
+
+        info!(
+            "Generated instance_id: 0x{:04X} (timestamp_part: 0x{:02X}, random_part: 0x{:02X})",
+            instance_id, timestamp_part, random_part
+        );
+
+        instance_id
+    }
+
+    /// Generate next transaction ID for signing request
+    ///
+    /// TX ID format (32-bit i32):
+    /// - High 16 bits: Instance unique identifier (from `instance_id`)
+    /// - Low 16 bits: Incremental counter within this instance (0-65535)
+    ///
+    /// This ensures:
+    /// 1. Different Signer instances have different ID spaces (via instance_id)
+    /// 2. Same instance generates sequential IDs (via counter)
+    /// 3. Very low collision probability even with multiple instances/restarts
+    ///
+    /// Example:
+    /// - Instance 1: 0x1A2B0001, 0x1A2B0002, 0x1A2B0003, ...
+    /// - Instance 2: 0x7F3C0001, 0x7F3C0002, 0x7F3C0003, ...
+    fn next_tx_id(&mut self) -> i32 {
+        // Get current counter and increment for next call
+        let counter = self.tx_counter;
+        self.tx_counter = self.tx_counter.wrapping_add(1);
+
+        // Combine instance_id (high 16 bits) and counter (low 16 bits)
+        let tx_id = ((self.instance_id as i32) << 16) | (counter as i32);
+
+        info!(
+            "Generated tx_id: {} (0x{:08X}) [instance: 0x{:04X}, counter: {}]",
+            tx_id, tx_id as u32, self.instance_id, counter
+        );
+
+        tx_id
     }
 
     /// Start local participant server using new ParticipantServer::new method
@@ -129,12 +207,17 @@ impl Signer {
               self.config.local_participant_port);
         info!("Connected to SSE server at {}", sse_url);
 
+        // Clone the participant server for the background task
+        let participant_server_clone = participant_server.clone();
+
         // Start participant server in background
         let handle = tokio::spawn(async move {
-            participant_server.start().await
+            participant_server_clone.start().await
                 .map_err(|e| anyhow::anyhow!("Local participant server failed: {}", e))
         });
 
+        // Store the participant server instance for graceful shutdown
+        self.local_participant_server = Some(participant_server);
         self.local_participant_handle = Some(handle);
         
         // Wait a moment to ensure server starts
@@ -177,10 +260,9 @@ impl Signer {
             return Err(anyhow::anyhow!("Account ID '{}' not found in available key shares", account_id));
         }
 
-        // Get and increment tx_id for this signature request
-        let tx_id = self.next_tx_id;
-        self.next_tx_id += 1;
-        
+        // Generate unique tx_id using instance_id + counter
+        let tx_id = self.next_tx_id();
+
         // Generate unique execution ID
         let execution_id = Uuid::new_v4();
         info!("Starting signature request - TX ID: {}, Execution ID: {}", tx_id, execution_id);
@@ -237,13 +319,43 @@ impl Signer {
         Ok(signature)
     }
 
-    /// Stop local participant server
+    /// Stop local participant server gracefully
     pub async fn stop_local_participant(&mut self) -> Result<()> {
-        if let Some(handle) = self.local_participant_handle.take() {
-            info!("Stopping local participant server...");
-            handle.abort();
-            info!("Local participant server stopped");
+        info!("🛑 Initiating graceful shutdown of local participant server...");
+
+        // Step 1: Call shutdown on the ParticipantServer for graceful shutdown
+        if let Some(ref participant_server) = self.local_participant_server {
+            info!("Calling ParticipantServer::shutdown()...");
+            participant_server.shutdown().await
+                .map_err(|e| anyhow::anyhow!("Failed to shutdown participant server: {}", e))?;
+            info!("✓ ParticipantServer shutdown completed");
         }
+
+        // Step 2: Wait for the server task to complete or abort it
+        if let Some(handle) = self.local_participant_handle.take() {
+            info!("Waiting for server task to complete...");
+
+            // Give the server a bit of time to finish gracefully
+            let timeout = tokio::time::Duration::from_secs(5);
+            match tokio::time::timeout(timeout, handle).await {
+                Ok(result) => {
+                    match result {
+                        Ok(Ok(())) => info!("✓ Server task completed successfully"),
+                        Ok(Err(e)) => error!("Server task finished with error: {}", e),
+                        Err(e) => error!("Server task panicked: {:?}", e),
+                    }
+                }
+                Err(_) => {
+                    info!("Server task did not complete within timeout, this is expected");
+                    // Note: The handle is already dropped, no need to abort
+                }
+            }
+        }
+
+        // Step 3: Clear the participant server reference
+        self.local_participant_server = None;
+
+        info!("✅ Local participant server stopped successfully");
         Ok(())
     }
 
@@ -260,19 +372,46 @@ impl Signer {
             }
         };
 
-        env_logger::Builder::from_default_env()
+        // Use try_init() instead of init() to allow multiple calls
+        // This is important for repeated initialization scenarios (e.g., tests)
+        match env_logger::Builder::from_default_env()
             .filter_level(log_level)
-            .init();
+            .try_init()
+        {
+            Ok(_) => {
+                info!("Logging initialized with level: {}", level);
+            }
+            Err(_) => {
+                // Logger already initialized, this is fine in repeated initialization scenarios
+                info!("Logger already initialized, continuing with existing configuration");
+            }
+        }
 
-        info!("Logging initialized with level: {}", level);
         Ok(())
     }
 }
 
 impl Drop for Signer {
     fn drop(&mut self) {
-        if let Some(handle) = self.local_participant_handle.take() {
-            handle.abort();
+        // Attempt graceful shutdown when Signer is dropped
+        log::warn!("⚠️ Signer being dropped, attempting graceful shutdown...");
+
+        // We can't await in Drop, so we use a blocking approach
+        if self.local_participant_server.is_some() || self.local_participant_handle.is_some() {
+            // Create a runtime for blocking cleanup
+            if let Ok(rt) = tokio::runtime::Runtime::new() {
+                let _ = rt.block_on(async {
+                    let _ = self.stop_local_participant().await;
+                });
+            } else {
+                // Fallback to abort if we can't create runtime
+                log::error!("Failed to create runtime for graceful shutdown, aborting task");
+                if let Some(handle) = self.local_participant_handle.take() {
+                    handle.abort();
+                }
+            }
         }
+
+        log::info!("Signer dropped");
     }
 }

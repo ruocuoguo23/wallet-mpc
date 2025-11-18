@@ -3488,6 +3488,7 @@ dependencies = [
  "log",
  "participant",
  "proto",
+ "rand 0.8.5",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",

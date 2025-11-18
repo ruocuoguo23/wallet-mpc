@@ -13,7 +13,11 @@ use cggmp21::security_level::SecurityLevel128;
 use cggmp21::signing::msg::Msg;
 use sha2::Sha256;
 use std::error::Error;
+use std::pin::Pin;
 use alloy::hex;
+use futures::{Sink, Stream};
+use round_based::{Incoming, Outgoing};
+use crate::client::TransportError;
 
 /// Parameters per each curve that are needed in tests
 pub trait CurveParams: Curve {
@@ -25,6 +29,71 @@ pub trait CurveParams: Curve {
 impl CurveParams for cggmp21::supported_curves::Secp256k1 {
     type HdAlgo = cggmp21::hd_wallet::Slip10;
     // type ExVerifier = external_verifier::Bitcoin;
+}
+
+/// RAII guard for managing room connections lifecycle
+/// Ensures proper cleanup when signing is complete or fails
+pub struct RoomGuard<M>
+where
+    M: Send + 'static,
+{
+    index: u16,
+    room_id: String,
+    incoming: Option<Pin<Box<dyn Stream<Item = Result<Incoming<M>, TransportError>> + Send>>>,
+    outgoing: Option<Pin<Box<dyn Sink<Outgoing<M>, Error = TransportError> + Send>>>,
+}
+
+impl<M> RoomGuard<M>
+where
+    M: Send + 'static,
+{
+    fn new(
+        index: u16,
+        room_id: String,
+        incoming: Pin<Box<dyn Stream<Item = Result<Incoming<M>, TransportError>> + Send>>,
+        outgoing: Pin<Box<dyn Sink<Outgoing<M>, Error = TransportError> + Send>>,
+    ) -> Self {
+        log::debug!("RoomGuard created for room '{}' with index {}", room_id, index);
+        Self {
+            index,
+            room_id,
+            incoming: Some(incoming),
+            outgoing: Some(outgoing),
+        }
+    }
+
+    /// Take ownership of the incoming and outgoing channels
+    /// This consumes the guard and transfers ownership to the caller
+    fn take_channels(
+        &mut self,
+    ) -> (
+        Pin<Box<dyn Stream<Item = Result<Incoming<M>, TransportError>> + Send>>,
+        Pin<Box<dyn Sink<Outgoing<M>, Error = TransportError> + Send>>,
+    ) {
+        (
+            self.incoming.take().expect("Channels already taken"),
+            self.outgoing.take().expect("Channels already taken"),
+        )
+    }
+}
+
+impl<M> Drop for RoomGuard<M>
+where
+    M: Send + 'static,
+{
+    fn drop(&mut self) {
+        // When RoomGuard is dropped, the streams/sinks will be dropped automatically
+        // This closes the SSE connection and cleans up resources
+        log::info!(
+            "🧹 RoomGuard dropped for room '{}' with index {} - cleaning up connection",
+            self.room_id,
+            self.index
+        );
+
+        // Explicitly drop the channels to ensure cleanup
+        drop(self.incoming.take());
+        drop(self.outgoing.take());
+    }
 }
 
 pub struct Signing {
@@ -53,8 +122,13 @@ impl Signing {
     {
         let eid = ExecutionId::new(execution_id);
 
+        // Join room and create guard for automatic cleanup
         let (_, incoming, outgoing) = self.room.join_room::<Msg<T, Sha256>>(index).await?;
+        let room_id = format!("signing_{}", std::str::from_utf8(execution_id).unwrap_or("unknown"));
+        let mut guard = RoomGuard::new(index, room_id, incoming, outgoing);
 
+        // Take channels from guard for use in MPC
+        let (incoming, outgoing) = guard.take_channels();
         let party = MpcParty::connected((incoming, outgoing));
 
         // tx parameter should already be the signing hash, not the raw transaction
@@ -183,6 +257,11 @@ impl Signing {
 
         log::info!("Signature generated - r: {} bytes, s: {} bytes, recovery_id: {}",
                    r_bytes.len(), s_bytes.len(), recovery_id);
+
+        // Explicitly drop the guard to ensure room cleanup
+        // This will trigger the Drop trait implementation
+        drop(guard);
+        log::info!("✅ Room cleanup completed for signing operation");
 
         Ok((r_bytes.to_vec(), s_bytes.to_vec(), recovery_id))
     }

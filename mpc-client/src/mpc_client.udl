@@ -41,5 +41,6 @@ interface MpcSigner {
     void initialize();
     [Throws=MpcError]
     SignatureResult sign_data(sequence<u8> data, string account_id);  // Use account_id instead of derivation_path
+    [Throws=MpcError]
     void shutdown();
 };

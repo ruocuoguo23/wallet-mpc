@@ -200,23 +200,50 @@ impl MpcSigner {
         })
     }
 
-    /// Shutdown the MPC signer
-    pub fn shutdown(&self) {
+    /// Shutdown the MPC signer gracefully
+    pub fn shutdown(&self) -> Result<(), MpcError> {
+        log::info!("🛑 MpcSigner shutdown initiated");
+        
         let signer_mutex = self.signer.clone();
         let runtime = self.runtime.clone();
 
-        let _ = std::thread::scope(|s| {
+        std::thread::scope(|s| {
             let handle = s.spawn(move || {
                 runtime.block_on(async move {
+                    log::info!("Acquiring signer lock for shutdown...");
                     let mut signer_guard = signer_mutex.lock().await;
+                    
                     if let Some(ref mut signer) = *signer_guard {
-                        let _ = signer.stop_local_participant().await;
+                        log::info!("Calling stop_local_participant()...");
+                        signer.stop_local_participant().await
+                            .map_err(|e| {
+                                log::error!("Failed to stop local participant: {}", e);
+                                MpcError::NetworkError {
+                                    msg: format!("Failed to stop local participant: {}", e)
+                                }
+                            })?;
+                        log::info!("✓ Local participant stopped successfully");
+                    } else {
+                        log::warn!("Signer already None, nothing to shutdown");
                     }
+                    
+                    // Clear the signer
                     *signer_guard = None;
+                    log::info!("✓ Signer cleared");
+                    
+                    Ok::<(), MpcError>(())
                 })
             });
 
-            handle.join()
-        });
+            handle.join().map_err(|_| {
+                log::error!("Thread panicked during shutdown");
+                MpcError::NetworkError {
+                    msg: "Thread panicked during shutdown".to_string()
+                }
+            })?
+        })?;
+        
+        log::info!("✅ MpcSigner shutdown completed successfully");
+        Ok(())
     }
 }
