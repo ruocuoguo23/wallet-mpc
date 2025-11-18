@@ -1,4 +1,9 @@
 # Client Configuration
+
+# Gateway configuration
+gateway:
+  url: "http://127.0.0.1:8080"
+
 # Local participant configuration
 local_participant:
   host: "127.0.0.1"
@@ -11,8 +16,6 @@ remote_services:
   sign_service:
     participant_host: "127.0.0.1"
     participant_port: 50051
-    sse_host: "127.0.0.1"      # SSE server address (deployed in sign-service)
-    sse_port: 8080             # SSE server port
     index: 0  # sign-service acts as participant 0
 
 # Ethereum provider configuration

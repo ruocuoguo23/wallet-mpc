@@ -3,6 +3,7 @@ members = [
     "client",
     "mpc-client",
     "sign-service",
+    "sign-gateway",
     "participant",
     "proto",
     "sse",

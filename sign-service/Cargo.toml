@@ -19,5 +19,4 @@ futures = { workspace = true }
 cggmp21 = { version = "0.6.2", features = ["curve-secp256k1", "hd-wallet", "hd-slip10"] }
 
 # Internal dependencies
-sse = { path = "../sse" }
 participant = { path = "../participant" }

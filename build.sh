@@ -7,7 +7,7 @@ TARGET_DIR="bin"
 mkdir -p $TARGET_DIR
 
 # Define projects to build
-PROJECTS=("client" "sign-service" "key-gen")
+PROJECTS=("client" "sign-service" "key-gen" "sign-gateway")
 
 # Execute cargo build --release
 echo "Building projects in release mode..."

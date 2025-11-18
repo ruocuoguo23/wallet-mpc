@@ -18,6 +18,8 @@ fn load_mpc_config(config_path: &str) -> Result<MpcConfig> {
         .with_context(|| "Failed to parse YAML config")?;
     
     // Extract configuration values
+    let gateway = config.get("gateway")
+        .ok_or_else(|| anyhow::anyhow!("Missing gateway config"))?;
     let local_participant = config.get("local_participant")
         .ok_or_else(|| anyhow::anyhow!("Missing local_participant config"))?;
     let remote_services = config.get("remote_services")
@@ -28,6 +30,23 @@ fn load_mpc_config(config_path: &str) -> Result<MpcConfig> {
         .ok_or_else(|| anyhow::anyhow!("Missing mpc config"))?;
     let logging = config.get("logging")
         .ok_or_else(|| anyhow::anyhow!("Missing logging config"))?;
+
+    // Parse gateway URL to extract host and port
+    let gateway_url = gateway.get("url")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("Missing gateway.url"))?;
+
+    // Parse URL to extract host and port (e.g., "http://127.0.0.1:8080")
+    let url_parts: Vec<&str> = gateway_url.split("://").collect();
+    let host_port = url_parts.get(1)
+        .ok_or_else(|| anyhow::anyhow!("Invalid gateway URL format"))?;
+    let parts: Vec<&str> = host_port.split(':').collect();
+    let sse_host = parts.get(0)
+        .ok_or_else(|| anyhow::anyhow!("Invalid gateway URL: missing host"))?
+        .to_string();
+    let sse_port = parts.get(1)
+        .and_then(|p| p.parse::<u16>().ok())
+        .ok_or_else(|| anyhow::anyhow!("Invalid gateway URL: missing or invalid port"))?;
 
     // Load key share from file - backward compatibility support
     let key_share_file = local_participant.get("key_share_file")
@@ -84,14 +103,8 @@ fn load_mpc_config(config_path: &str) -> Result<MpcConfig> {
             .and_then(|v| v.as_u64())
             .ok_or_else(|| anyhow::anyhow!("Missing sign_service.participant_port"))?
             as u16,
-        sse_host: sign_service.get("sse_host")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing sign_service.sse_host"))?
-            .to_string(),
-        sse_port: sign_service.get("sse_port")
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| anyhow::anyhow!("Missing sign_service.sse_port"))?
-            as u16,
+        sse_host,
+        sse_port,
         sign_service_index: sign_service.get("index")
             .and_then(|v| v.as_u64())
             .ok_or_else(|| anyhow::anyhow!("Missing sign_service.index"))?

@@ -1,102 +1,98 @@
 # Sign Service
 
-Sign Service是一个综合性的MPC签名服务，它同时运行SSE服务器和Participant服务器，为多方计算签名提供完整的基础设施。
+Sign Service is a server-side MPC participant that handles multi-party computation signing operations. It connects to the Sign Gateway for message coordination and provides gRPC endpoints for signing requests.
 
-## 功能特性
+## Features
 
-- **双服务器架构**: 同时运行SSE服务器(消息传递)和Participant服务器(MPC签名)
-- **YAML配置**: 使用配置文件管理所有设置
-- **自动Key Share管理**: 根据participant index自动加载对应的密钥分片
-- **完整的日志记录**: 支持多种日志级别和格式
-- **优雅的错误处理**: 提供详细的错误信息和恢复机制
+- **Participant Server**: Handles MPC signing operations as a server-side participant
+- **YAML Configuration**: Easy configuration management
+- **Key Share Management**: Automatically loads key shares based on participant index
+- **Comprehensive Logging**: Supports multiple log levels and formats
+- **Gateway Integration**: Connects to Sign Gateway for message coordination
 
-## 配置文件
+## Configuration
 
-配置文件位于 `config/sign-service.yaml`:
+Configuration file located at `config/sign-service.yaml`:
 
 ```yaml
-server:
-  sse:
-    host: "127.0.0.1"
-    port: 8080
-    cors_origins: ["http://localhost:3000", "http://127.0.0.1:3000"]
-  
-  participant:
-    host: "127.0.0.1"
-    port: 50051
-    index: 0  # 参与者索引 (0, 1, 或 2)
+# Gateway configuration
+gateway:
+  url: "http://127.0.0.1:8080"
 
+# Server configuration
+server:
+  host: "127.0.0.1"
+  port: 50051
+  index: 0  # Which participant this service represents (0, 1, or 2)
+
+# Logging configuration
 logging:
   level: "info"
-  format: "json"
+  format: "json"  # or "text"
 
+# MPC configuration
 mpc:
   threshold: 2
   total_participants: 3
-  key_share_file: "participant/key_share_1.json"
+  key_share_file: "service_key_shares.json"
 ```
 
-## 使用方法
+## Usage
 
-### 编译
+### Build
 
 ```bash
-cargo build -p sign-service
+cargo build --release --bin sign-service
 ```
 
-### 运行
+### Run
 
-使用默认配置文件:
+With default config:
 ```bash
-cargo run -p sign-service
+./target/release/sign-service
 ```
 
-指定配置文件:
+With custom config:
 ```bash
-cargo run -p sign-service -- /path/to/your/config.yaml
+./target/release/sign-service config/sign-service.yaml
 ```
 
-### 测试
+### Test
 
 ```bash
 cargo test -p sign-service
 ```
 
-## 服务端点
+## Service Endpoints
 
-启动后，Sign Service会提供以下服务：
+### Participant Server (default port 50051)
+- gRPC service providing `sign_tx` method for transaction signing
 
-### SSE服务器 (默认端口 8080)
-- `GET /rooms/{room_id}/subscribe` - 订阅消息
-- `POST /rooms/{room_id}/issue_unique_idx` - 获取唯一索引
-- `POST /rooms/{room_id}/broadcast` - 广播消息
+## Key Share Files
 
-### Participant服务器 (默认端口 50051)
-- gRPC服务，提供 `sign_tx` 方法用于交易签名
+The service loads key shares based on the participant index from the configured file path.
 
-## Key Share文件
+## Logging
 
-服务会根据participant index自动加载对应的key share文件：
-- index 0 → `participant/key_share_1.json`
-- index 1 → `participant/key_share_2.json`  
-- index 2 → `participant/key_share_3.json`
+Supported log levels:
+- `error` - Error messages
+- `warn` - Warning messages
+- `info` - General information (default)
+- `debug` - Debug information
+- `trace` - Detailed trace information
 
-## 日志
+## Architecture
 
-支持以下日志级别：
-- `error` - 错误信息
-- `warn` - 警告信息
-- `info` - 一般信息 (默认)
-- `debug` - 调试信息
-- `trace` - 详细跟踪信息
+Sign Service works as part of the MPC signing infrastructure:
 
-## 架构说明
+1. **Gateway Integration**: Connects to Sign Gateway for message coordination
+2. **Participant Server**: Processes MPC signing requests via gRPC
+3. **Key Management**: Securely manages cryptographic key shares
+4. **Configuration**: Centralized configuration management
 
-Sign Service作为MPC签名基础设施的核心组件：
+## Related Components
 
-1. **SSE服务器**: 负责参与者之间的消息传递和同步
-2. **Participant服务器**: 处理实际的MPC签名请求
-3. **配置管理**: 统一管理所有服务配置
-4. **安全性**: 每个参与者只能访问自己的密钥分片
+- **Sign Gateway**: Handles SSE communication and message routing between participants
+- **Client**: Client-side participant for initiating signing requests
 
 这为后续与客户端的集成和以太坊交易的多方签名奠定了坚实的基础。

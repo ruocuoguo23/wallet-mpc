@@ -1,0 +1,9 @@
+# Sign Gateway Configuration
+server:
+  host: "127.0.0.1"
+  port: 8080
+  cors_origins: ["http://localhost:3000", "http://127.0.0.1:3000"]
+# Logging configuration
+logging:
+  level: "info"
+  format: "json"  # or "text"
