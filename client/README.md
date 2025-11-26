@@ -1,11 +1,11 @@
 # MPC Wallet Client
 
-MPC Wallet Client 是一个基于多方计算(MPC)的以太坊钱包客户端，它运行本地的participant server并与远程sign-service协作完成3-2门限签名。
+MPC Wallet Client 是一个基于多方计算(MPC)的以太坊钱包客户端，它运行本地的participant server并与远程sign-gateway协作完成3-2门限签名。
 
 ## 功能特性
 
 - **本地Participant服务器**: 运行自己的MPC participant，保护本地密钥分片
-- **远程协作**: 与sign-service和其他participants协作完成签名
+- **远程协作**: 与sign-gateway和其他participants协作完成签名
 - **以太坊集成**: 支持以太坊交易的构造、签名和发送
 - **3-2门限签名**: 3个participants中任意2个即可完成签名
 - **YAML配置**: 灵活的配置文件管理
@@ -34,14 +34,11 @@ local_participant:
   index: 1     # 本客户端作为participant 1
   key_share_file: "participant/key_share_2.json"
 
-# 远程sign-service配置
+# 远程sign-gateway配置
 remote_services:
-  sign_service:
+  sign_gateway:
     participant_host: "127.0.0.1"
-    participant_port: 50051
-    sse_host: "127.0.0.1"      # SSE服务器地址（部署在sign-service中）
-    sse_port: 8080             # SSE服务器端口
-    index: 0
+    participant_port: 50050
 
 # Ethereum provider配置
 ethereum:
@@ -69,7 +66,7 @@ cargo build -p client
 
 ### 运行
 
-确保sign-service已经启动，然后运行客户端:
+确保sign-gateway已经启动，然后运行客户端:
 
 ```bash
 cargo run -p client
@@ -82,12 +79,17 @@ cargo run -p client -- /path/to/your/config.yaml
 
 ### 运行示例
 
-1. 启动sign-service:
+1. 启动sign-gateway:
+```bash
+cargo run -p sign-gateway
+```
+
+2. 启动sign-service:
 ```bash
 cargo run -p sign-service
 ```
 
-2. 在新终端中启动client:
+3. 在新终端中启动client:
 ```bash
 cargo run -p client
 ```
@@ -157,12 +159,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```
 ┌─────────────────┐         ┌──────────────────┐
-│   Client        │◄────────┤  Sign-Service    │
-│  (Local         │  gRPC   │  (Participant 0  │
-│   Participant 1)│         │   + SSE Server)  │
+│   Client        │◄────────┤  Sign-Gateway    │
+│  (Local         │  gRPC   │  (Proxy to      │
+│   Participant 1)│         │   Sign-Service) │
 └─────────────────┘         └──────────────────┘
-         │                           │
-         │         SSE Messages      │
+         │                           
+         │         SSE Messages      
          └───────────┬─────────────────┘
                      │
             ┌─────────▼──────────┐
@@ -175,7 +177,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### 常见问题
 
-1. **连接失败**: 检查sign-service是否正在运行
+1. **连接失败**: 检查sign-gateway是否正在运行
 2. **端口冲突**: 修改配置文件中的端口号
 3. **密钥分片错误**: 确认key_share文件路径和内容正确
 4. **签名失败**: 检查SSE服务器连接和participant通信

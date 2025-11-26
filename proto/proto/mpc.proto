@@ -6,6 +6,10 @@ service Participant {
     rpc SignTx (SignMessage) returns (SignatureMessage);
 }
 
+service SignGateway {
+    rpc SignTx (SignMessage) returns (SignatureMessage);
+}
+
 enum Chain {
     Ethereum = 0;
     Bitcoin = 1;

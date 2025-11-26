@@ -5378,10 +5378,14 @@ dependencies = [
  "dotenv",
  "env_logger",
  "log",
+ "prost",
+ "proto",
  "serde",
  "serde_yaml",
  "sse",
+ "thiserror 2.0.17",
  "tokio",
+ "tonic",
 ]
 
 [[package]]

@@ -11,12 +11,11 @@ local_participant:
   index: 1     # This client acts as participant 1
   key_share_file: "client_key_shares.json"  # Key share corresponding to index 1
 
-# Remote sign-service configuration
+# Remote sign-gateway configuration
 remote_services:
-  sign_service:
+  sign_gateway:
     participant_host: "127.0.0.1"
-    participant_port: 50051
-    index: 0  # sign-service acts as participant 0
+    participant_port: 50050
 
 # Ethereum provider configuration
 ethereum:

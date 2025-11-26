@@ -24,8 +24,8 @@ fn load_mpc_config(config_path: &str) -> Result<MpcConfig> {
         .ok_or_else(|| anyhow::anyhow!("Missing local_participant config"))?;
     let remote_services = config.get("remote_services")
         .ok_or_else(|| anyhow::anyhow!("Missing remote_services config"))?;
-    let sign_service = remote_services.get("sign_service")
-        .ok_or_else(|| anyhow::anyhow!("Missing sign_service config"))?;
+    let sign_gateway = remote_services.get("sign_gateway")
+        .ok_or_else(|| anyhow::anyhow!("Missing sign_gateway config"))?;
     let mpc = config.get("mpc")
         .ok_or_else(|| anyhow::anyhow!("Missing mpc config"))?;
     let logging = config.get("logging")
@@ -95,20 +95,16 @@ fn load_mpc_config(config_path: &str) -> Result<MpcConfig> {
             as u16,
         local_participant_index: participant_index,
         key_shares,
-        sign_service_host: sign_service.get("participant_host")
+        sign_gateway_host: sign_gateway.get("participant_host")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing sign_service.participant_host"))?
+            .ok_or_else(|| anyhow::anyhow!("Missing sign_gateway.participant_host"))?
             .to_string(),
-        sign_service_port: sign_service.get("participant_port")
+        sign_gateway_port: sign_gateway.get("participant_port")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| anyhow::anyhow!("Missing sign_service.participant_port"))?
+            .ok_or_else(|| anyhow::anyhow!("Missing sign_gateway.participant_port"))?
             as u16,
         sse_host,
         sse_port,
-        sign_service_index: sign_service.get("index")
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| anyhow::anyhow!("Missing sign_service.index"))?
-            as u16,
         threshold: mpc.get("threshold")
             .and_then(|v| v.as_u64())
             .ok_or_else(|| anyhow::anyhow!("Missing mpc.threshold"))?
@@ -192,7 +188,7 @@ async fn run_mpc_signing_test(mpc_config: MpcConfig, test_number: u32) -> Result
 
     println!("✅ MPC Infrastructure Ready");
     println!("   - Local participant server: RUNNING");
-    println!("   - Remote sign-service: CONNECTED");
+    println!("   - Remote sign-gateway: CONNECTED");
 
     // Step 2: Create and Sign Transaction
     println!("\n[2/3] 🔐 Creating and Signing Transaction...");

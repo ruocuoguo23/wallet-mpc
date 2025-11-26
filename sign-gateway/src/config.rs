@@ -7,23 +7,36 @@ use serde::{Deserialize, Serialize};
 
 use sse::{AppConfig as SseAppConfig, SSEConfig};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SignGatewayConfig {
     pub server: ServerConfig,
     pub logging: LoggingConfig,
+    pub grpc: GrpcConfig,
+    pub sign_service: SignServiceConfig,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     pub cors_origins: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LoggingConfig {
     pub level: String,
     pub format: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GrpcConfig {
+    pub host: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SignServiceConfig {
+    pub url: String,
 }
 
 impl SignGatewayConfig {
@@ -42,6 +55,10 @@ impl SignGatewayConfig {
                 port: self.server.port,
             },
         }
+    }
+
+    pub fn grpc_addr(&self) -> String {
+        format!("{}:{}", self.grpc.host, self.grpc.port)
     }
 }
 

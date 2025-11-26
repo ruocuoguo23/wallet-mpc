@@ -12,3 +12,7 @@ log.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_yaml = "0.9"
+proto = { path = "../proto" }
+tonic.workspace = true
+prost.workspace = true
+thiserror.workspace = true

@@ -62,9 +62,9 @@ fn main() -> Result<()> {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-
+        
         if keys.len() != args.n_parties as usize {
-            eprintln!("⚠️  Warning: Number of public keys ({}) doesn't match number of parties ({})",
+            eprintln!("⚠️  Warning: Number of public keys ({}) doesn't match number of parties ({})", 
                      keys.len(), args.n_parties);
             eprintln!("   Files will not be encrypted.");
             None

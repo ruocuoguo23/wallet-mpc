@@ -24,41 +24,41 @@ Phemex Global 的 Ethereum 用户入金地址目前由冷钱包统一管理，�
 
 1. 及时归集
 
-   * 常规情况下，归集任务应在 24 小时内完成。
+    * 常规情况下，归集任务应在 24 小时内完成。
 
-   * 紧急模式下（如市场剧烈波动），应支持 1 小时内完成归集。
+    * 紧急模式下（如市场剧烈波动），应支持 1 小时内完成归集。
 
 2. 资产安全
 
-   * 使用 CGGMP24 协议的 3‑2 阈值签名方案，确保私钥从不集中存储。
+    * 使用 CGGMP24 协议的 3‑2 阈值签名方案，确保私钥从不集中存储。
 
-   * 所有签名操作均在安全环境（手机端 Secure Storage、AWS Nitro Enclave）中执行。
+    * 所有签名操作均在安全环境（手机端 Secure Storage、AWS Nitro Enclave）中执行。
 
 3. 可审计性
 
-   * 每个归集任务、签名步骤、交易广播均生成不可篡改的审计日志。
+    * 每个归集任务、签名步骤、交易广播均生成不可篡改的审计日志。
 
-   * 所有任务文件与签名记录均加密存档，支持追溯与合规审计。
+    * 所有任务文件与签名记录均加密存档，支持追溯与合规审计。
 
 4. 用户无感知
 
-   * 归集与退款流程完全后台自动化，对用户体验无影响。
+    * 归集与退款流程完全后台自动化，对用户体验无影响。
 
-   * 用户资产余额与入金地址保持不变。
+    * 用户资产余额与入金地址保持不变。
 
 5. 多端协作
 
-   * 手机端 App 负责触发签名流程与人工确认。
+    * 手机端 App 负责触发签名流程与人工确认。
 
-   * 云端 Enclave 节点参与 MPC 协议完成签名计算。
+    * 云端 Enclave 节点参与 MPC 协议完成签名计算。
 
-   * Blockchain Service 负责任务生成、交易广播与日志记录。
+    * Blockchain Service 负责任务生成与日志记录。
 
 6. 退款支持（可选扩展）
 
-   * 支持异常入金、超额入金的退款处理。
+    * 支持异常入金、超额入金的退款处理。
 
-   * 退款任务与归集任务共用 MPC 签名与审计机制。
+    * 退款任务与归集任务共用 MPC 签名与审计机制。
 
 参考文档：[ Migrate Ethereum Users Deposits Addresses to Warm Wallets](https://cmex-pro.jp.larksuite.com/wiki/GbbRwNvhSij5CDkyu5ij6RwUp7g)
 
@@ -67,6 +67,7 @@ Phemex Global 的 Ethereum 用户入金地址目前由冷钱包统一管理，�
 # 3. 技术架构（Architecture Overview）
 
 ## 3.1 架构图
+
 ```mermaid
 sequenceDiagram
     %% 定义参与者分组
@@ -81,8 +82,8 @@ sequenceDiagram
     end
 
     box MPC服务 #lightpink
-        participant SignGateway as Sign Gateway<br/>(SSE Message Broker)
-        participant SignService as Sign Service<br/>(Server Participant)<br/>(MPC Participant 2)
+        participant SignGateway as Sign Gateway<br/>(SSE & gRPC Proxy)
+        participant SignService as Sign Service<br/>(Enclave Participant)<br/>(MPC Participant 2)
     end
 
     box 区块链 #lightyellow
@@ -114,13 +115,15 @@ sequenceDiagram
         SignService->>AdminApp: 返回任务加载成功
     end
 
-    %% 阶段 3：MPC签名（通过Gateway协调）
+    %% 阶段 3：MPC签名（Sign Gateway 负责 gRPC + SSE 转发）
     rect rgb(240,240,240)
         Note over AdminApp,SignService: MPC 阈值签名流程（3-2模式）
         AdminApp->>AdminApp: 生成唯一 tx_id<br/>(instance_id + counter)
         AdminApp->>AdminApp: 计算 room_id<br/>(room_id = "signing_" + tx_id)
         AdminApp->>LocalParticipant: 调用 sign() 接口<br/>(data, account_id)
-        
+        LocalParticipant->>SignGateway: gRPC SignTx (Participant Service)
+        SignGateway->>SignService: gRPC SignTx (代理到 Enclave)
+
         par Local Participant 初始化
             LocalParticipant->>LocalParticipant: 启动本地 gRPC 服务
             LocalParticipant->>LocalParticipant: 根据 account_id 加载 shareA
@@ -132,7 +135,7 @@ sequenceDiagram
             SignGateway->>SignService: 建立 SSE 连接
         end
 
-        Note over LocalParticipant,SignService: CGGMP21 Round-Based 签名协议
+        Note over LocalParticipant,SignService: CGGMP21 Round-Based 签名协议（消息经由 Sign Gateway SSE 转发）
         
         loop Round 1 到 Round N (多轮交互)
             LocalParticipant->>LocalParticipant: 计算本轮消息<br/>(承诺/证明/部分签名)
@@ -170,27 +173,27 @@ sequenceDiagram
 
 * **主要功能**：
 
-  * 发起归集任务请求。
+    * 接收来自 Admin Console 的加密任务文件。
 
-  * 接收来自 Admin Console 的加密任务文件。
+    * 使用本地 age 私钥解密任务文件。
 
-  * 使用本地 age 私钥解密任务文件。
+    * 发起归集任务请求。
 
-  * 在 Secure Storage 中校验文件完整性。
+    * 在 Secure Storage 中校验文件完整性。
 
-  * 通知 sign-service 加载签名任务。
+    * 通知 sign-service 加载签名任务。
 
-  * **调用 mpc-client 的 sign() 接口**，传入签名数据和 account\_id。
+    * **调用 mpc-client 的 sign() 接口**，传入签名数据和 account\_id。
 
-  * 生成唯一的 tx\_id（基于 instance\_id + counter）。
+    * 生成唯一的 tx\_id（基于 instance\_id + counter）。
 
-  * 最终获得完整签名并直接广播交易上链。
+    * 最终获得完整签名并直接广播交易上链。
 
 * **技术实现**：
 
-  * 使用 mpc-client Rust 库，通过 UniFFI 提供跨平台接口（Swift/Kotlin）。
+    * 使用 mpc-client Rust 库，通过 UniFFI 提供跨平台接口（Swift/Kotlin）。
 
-  * 内部管理 Local Participant 的生命周期。
+    * 内部管理 Local Participant 的生命周期。
 
 ### 3.2.2 Local Participant（MPC Participant 1）
 
@@ -198,27 +201,27 @@ sequenceDiagram
 
 * **主要功能**：
 
-  * 由 mpc-client 自动启动，运行本地 gRPC 服务。
+    * 由 mpc-client 自动启动，运行本地 gRPC 服务。
 
-  * 持有 shareA，根据 account\_id 索引加载对应的 key share。
+    * 持有 shareA，根据 account\_id 索引加载对应的 key share。
 
-  * 通过 sign-gateway 订阅签名 room（SSE 连接）。
+    * 通过 sign-gateway 订阅签名 room（SSE 连接）。
 
-  * 参与 CGGMP21 round-based 签名协议。
+    * 参与 CGGMP21 round-based 签名协议。
 
-  * 通过 sign-gateway 与 Server Participant 交换多轮签名消息。
+    * 通过 sign-gateway 与 Server Participant 交换多轮签名消息。
 
-  * 计算部分签名并最终组合完整签名。
+    * 计算部分签名并最终组合完整签名。
 
 * **通信方式**：
 
-  * **接收消息**：通过 SSE 从 sign-gateway 接收其他参与方的消息。
+    * **接收消息**：通过 SSE 从 sign-gateway 接收其他参与方的消息。
 
-  * **发送消息**：通过 HTTP POST 向 sign-gateway 广播本轮消息。
+    * **发送消息**：通过 HTTP POST 向 sign-gateway 广播本轮消息。
 
 * **生命周期管理**：
 
-  * 由 Signer 实例管理，签名完成后自动清理连接。
+    * 由 Signer 实例管理，签名完成后自动清理连接。
 
 ### 3.2.3 区块链服务·Admin Console
 
@@ -232,7 +235,7 @@ sequenceDiagram
 
 * 使用 age protocol 加密任务文件，指定接收者公钥（App 公钥 + SignService 公钥）。
 
-* 将加密任务文件返回给手机端。
+* 将加密任务文件的s3下载链接返回给手机端。
 
 * 通过扫链程序更新交易的执行结果。
 
@@ -246,35 +249,43 @@ sequenceDiagram
 
 * 记录交易状态与执行结果。
 
-### 3.2.5 Sign Gateway - SSE 消息代理
+### 3.2.5 Sign Gateway - SSE 消息代理 + gRPC 转发
 
-* **角色定位**：MPC 参与方之间的消息中转站。
+* **角色定位**：MPC 参与方之间的消息中转站 + SignTx gRPC 代理。
 
 * **主要功能**：
 
-  * 提供基于 SSE（Server-Sent Events）的实时消息协调服务。
+    * 提供基于 SSE（Server-Sent Events）的实时消息协调服务。
 
-  * 管理签名会话 room，基于 room\_id 隔离不同签名任务。
+    * 提供 `SignGateway.SignTx` / `Participant.SignTx` 双 gRPC 接口，向后兼容老客户端，同时统一入口。
 
-  * 在 Local Participant 和 Server Participant 之间转发 MPC 协议消息。
+    * 负责把所有来自客户端的 gRPC 签名请求转发到部署在 Enclave 内的 sign-service。
 
-  * 不持有任何密钥材料，仅作为消息中转。
+    * 管理签名会话 room，基于 room_id 隔离不同签名任务。
+
+    * 在 Local Participant 和 Server Participant 之间转发 MPC 协议消息。
+
+    * 不持有任何密钥材料，仅作为消息与请求中转。
 
 * **核心接口**：
 
-  * `GET /rooms/{room_id}/subscribe` - 订阅 room 的 SSE 事件流。
+    * `GET /rooms/{room_id}/subscribe` - 订阅 room 的 SSE 事件流。
 
-  * `POST /rooms/{room_id}/broadcast` - 广播消息给 room 内所有参与者。
+    * `POST /rooms/{room_id}/broadcast` - 广播消息给 room 内所有参与者。
+
+    * `gRPC /mpc.Participant/SignTx` - 兼容旧客户端的签名接口，内部代理到 sign-service。
+
+    * `gRPC /mpc.SignGateway/SignTx` - 新接口，后续可加入安全校验逻辑。
 
 * **Room ID 规则**：
 
-  * 格式：`room_id = "signing_" + tx_id`
+    * 格式：`room_id = "signing_" + tx_id`
 
-  * **tx\_id 由 App 端生成，格式为：`(instance_id << 16) | counter`**
+    * **tx_id 由 App 端生成，格式为：`(instance_id << 16) | counter`**
 
-  * **instance\_id：结合时间戳和随机数生成，避免不同实例冲突。**
+    * **instance_id：结合时间戳和随机数生成，避免不同实例冲突。**
 
-  * counter：单个实例内的递增计数器。
+    * counter：单个实例内的递增计数器。
 
 ### 3.2.6 Sign Service - Server Participant（MPC Participant 2）
 
@@ -282,33 +293,33 @@ sequenceDiagram
 
 * **主要功能**：
 
-  * 作为 MPC 签名的第二个参与方，持有 shareB。
+    * 作为 MPC 签名的第二个参与方，持有 shareB。
 
-  * 接收来自 App 的任务加载通知，使用本地 age 私钥解密任务文件。
+    * 接收来自 App 的任务加载通知，使用本地 age 私钥解密任务文件。
 
-  * 校验交易结构与 digest 合法性，并将待签名任务信息缓存于内存。
+    * 校验交易结构与 digest 合法性，并将待签名任务信息缓存于内存。
 
-  * 根据 account\_id 索引加载对应的 key share。
+    * 根据 account\_id 索引加载对应的 key share。
 
-  * 通过 sign-gateway 订阅签名 room（SSE 连接）。
+    * 通过 sign-gateway 订阅签名 room（SSE 连接）。
 
-  * 参与 CGGMP21 round-based 签名协议。
+    * 参与 CGGMP21 round-based 签名协议。
 
-  * 在 MPC 签名阶段校验 digest 是否匹配缓存任务，若不匹配则拒签。
+    * 在 MPC 签名阶段校验 digest 是否匹配缓存任务，若不匹配则拒签。
 
-  * 计算部分签名并通过 sign-gateway 返回。
+    * 计算部分签名并通过 sign-gateway 返回。
 
 * **通信方式**：
 
-  * **接收消息**：通过 SSE 从 sign-gateway 接收其他参与方的消息。
+    * **接收消息**：通过 SSE 从 sign-gateway 接收其他参与方的消息。
 
-  * **发送消息**：通过 HTTP POST 向 sign-gateway 广播本轮消息。
+    * **发送消息**：通过 HTTP POST 向 sign-gateway 广播本轮消息。
 
 * **安全保证**：
 
-  * 每次签名前校验 digest 与缓存任务的一致性。
+    * 每次签名前校验 digest 与缓存任务的一致性。
 
-  * 缓存信息仅驻留内存，签名完成后立即清除。
+    * 缓存信息仅驻留内存，签名完成后立即清除。
 
 ### 3.2.7 Ethereum 网络
 
@@ -326,37 +337,37 @@ sequenceDiagram
 
 * 任务构建：
 
-  * Admin Console 调用 Token Collect 服务扫描入金地址与余额。
+    * Admin Console 调用 Token Collect 服务扫描入金地址与余额。
 
-  * Token Collect 构造归集交易与 digest，并返回任务数据。
+    * Token Collect 构造归集交易与 digest，并返回任务数据。
 
-  * 任务数据中包含操作类型字段（`operation_type`），用于区分“归集”或“退款”。
+    * 任务数据中包含操作类型字段（`operation_type`），用于区分“归集”或“退款”。
 
 * 任务加密：
 
-  * Admin Console 使用 age protocol 对任务文件进行加密。
+    * Admin Console 使用 age protocol 对任务文件进行加密。
 
-  * 加密时指定多个接收者公钥：App 端的 age 公钥 + Sign Service 的 age 公钥。
+    * 加密时指定多个接收者公钥：App 端的 age 公钥 + Sign Service 的 age 公钥。
 
-  * 加密文件返回给手机端保存。
+    * 加密文件返回给手机端保存。
 
 ## 4.2 任务加载与验证
 
 * 任务加载：
 
-  * 手机端使用本地 age 私钥解密任务文件，在 Secure Storage 中校验完整性。
+    * 手机端使用本地 age 私钥解密任务文件，在 Secure Storage 中校验完整性。
 
-  * 手机端通知 sign-service 加载归集任务，并传递加密任务文件。
+    * 手机端通知 sign-service 加载归集任务，并传递加密任务文件。
 
-  * sign-service 使用本地 age 私钥解密文件，校验交易结构与 digest 合法性。
+    * sign-service 使用本地 age 私钥解密文件，校验交易结构与 digest 合法性。
 
-  * sign-service 将任务信息缓存于内存中。
+    * sign-service 将任务信息缓存于内存中。
 
 * 安全校验：
 
-  * 若文件结构或 digest 不合法，sign-service 拒绝加载任务并返回错误。
+    * 若文件结构或 digest 不合法，sign-service 拒绝加载任务并返回错误。
 
-  * 双方独立解密与校验，确保任务数据一致性。
+    * 双方独立解密与校验，确保任务数据一致性。
 
 ## 4.3 MPC shares 生成与分发
 
@@ -392,13 +403,13 @@ master_seed → master_key → account_0, account_1, ... → child_keys
 
 1. **为每个 child key 生成 MPC shares**：
 
-   * 对每个派生的 child\_key，使用 CGGMP21 协议生成 3-2 阈值的 key shares（shareA、shareB、shareC）。
+    * 对每个派生的 child\_key，使用 CGGMP21 协议生成 3-2 阈值的 key shares（shareA、shareB、shareC）。
 
-   * 生成 account\_id（可以是 BIP-32 路径的哈希或对应的地址）。
+    * 生成 account\_id（可以是 BIP-32 路径的哈希或对应的地址）。
 
 2. **构建 Key Share 文件**：
 
-   * 按照以下格式组织 key shares：
+    * 按照以下格式组织 key shares：
 
 ```json
 {
@@ -536,22 +547,6 @@ master_seed → master_key → account_0, account_1, ... → child_keys
           {
             "N": {
               "radix": 16,
-              "value": "93834baa9fa7a451ae4beab513b4cc708c413a23c25f0242181503e659eb78dffa782ae2f810ca611b337a72a3199d5ec139004c5ae6611bf1dc4c971f02c3a38b6f44206617810095daa6ae864eb2b375d032bd207e909dbe407b4f00e915cff22df4d64a15a4d6089942a44cef8393a5971b9dfd649991436b8b2c25ce8ef3d12ed2e750e4bfce71261e364c34397be94a7f8581aeeada229a948d47be43cef70d6a42f1777e05b11dabaf0ec7edb2af6e13b94283d05af2541f6dc2e01706d9561d6f8cbc185917dbedca7f51058e5e432e41604019029ec280a2d775feeb7ab3549c6282d039cc831a862696557ba4c2cf215b7cd84ece9f6e3c24a90994924b53ba902a9d5dc82119e66e284c9f529a985083bbb3cbe6e1d2f80ede083de7c2f7ffec5f454f50df100b85b1d03ea47466f085a7fb56141b399f0bc2fca57b35244cd39d20b723b9eb8dd3cb1664c8fa3b0a5b90ccf0b670bb3eeb31eff3d1f04d0221f842ba1e791636264356bb4dfaf14a2ac6c99cb6f6c19bb241fea9"
-            },
-            "s": {
-              "radix": 16,
-              "value": "1192faf5b0a8c84a3a78e6e5e382e3e913af7e7c648dc56eb44d9b5e42fe06871756aa0d71d52f095e47c571b955b30f0325123f459273cb191a87e9842538004eead7694699e596c3c0e9daffa92da6a6ba01153baa20dc65aa39466750a7158751d5185dc2b395e374d084b9a477944692591390f1bb6d2f70be388878332b1539140933e46059ca37f3993180b6a3dc1a99a8e363e81326b7906d7f3d8d715ed5dba6dd7c44533769a28bd2ba90b27d0929dfc8b4acfb7900ce1a5abe89ceda151507e1d877d891b512d1e867415ce2264f653217bf428240c91382ea687f718dc9b7304bebb9d1f8c6c396c6d794e020ac7d867d196992b1da200881cf45f6a09e7a8b0115fd168087e5ba3099a6ce1930c5a8a5e3661ec52cf840a3211df9c32293820f8d363f23ada53f5b685746674de8247578e7c89d18a1c666de586b2edfd08ef8961d2a229135111f50f6631cde10c5cf94505aaf78f9d377ac71ba7c1a4392b5453b75067d8e6d84a0e0ba6fbefe1fe7360c80fbebbb5a7faa3e"
-            },
-            "t": {
-              "radix": 16,
-              "value": "89a863bc97b85cae7d04c2705700819d196e2a684e6f6c426fa9a9b38874bde511af518fc2db06ded5ca93ec4310d2b4c7803418d529cfe39658bbdb5a317c97b70967796d52002e7ada16a8c85336a8296c527df42bd54c3d9db7b8a94a85adbc52f1d26873f5165b311b410d86b68efd1d18bbb043ccf5f580e6f575dbba7e890bcfebd68294eb40dfb7a8a44f0eb3d4304c8e7aac9722a4eef12d654b1350409d7c39c12a71707f701d0eb15d68c4f9f61dd635f14392e81cf500ba6854d04c9eaa1109f610dd6bb70da04a1a542a282cd4ebb3ef6c4633239807438f89baefd6986f33fc0edf719e15b06ca116362b4b979093778fca682a2fe7621c6b0a621505377b6ddda751771050b597c5dbb2582085a6380df4217de099497ed95dcc04d88b74e4250831e0d95024a5ed330fe8622dc0645846cd394e0004a6b8c722cb987a1c84edf982acf034e6780c0bf90fcd381fac3ca7c7c160407bd28c876fe3cf47dc9122f8a7a85ebb2b18e74bb2433be309b5e34483868500fd8f78f"
-            },
-            "multiexp": null,
-            "crt": null
-          },
-          {
-            "N": {
-              "radix": 16,
               "value": "6ce3b8e10c2346a63f84f0597052353865aa883c3a033695ea01c0293d3c9ba6d5c91023f012ad071cbd641968cf47540afb9b365f0473c939fcf646ef9801ef03e7c0c4099ae1d55fd811d45338e5d37f846f92fea8046199aae0ff86c7289a3c0aabace873ec9a2492de23f3a2edca67d5ebc236a126f6c4c71a08c4d9d65b382d657f7cc7237534297bd72bc65a5ba8aaacbd359fb8bb32199056ad2504a87d15ebbdb6c27e197cb8f276312125369ddd2b54011a168018cc2618931789074c625a6ba4b6f7e9c9964ded7ac2cb5f2d5b1779b419dfac512e0d16c89ec127cec5a52b61b6430dcd5a63a4fc420f88763feec922e50670f81352acaead04bf88b0b03a2078fd0b249254b30e8d021c1b5aaf70e7bce20475684db80513c1bfdcfec527ac2c4625ed3ba190cccfec594e052be45e343331ba26987893008c1f926f15edd989d04deabf9599df0037983633c6de2e0f5a87422ff93033564a855775f2922ae827414afb1d2d7456f91f172e7c705c26229e6ebd0fc6914351bd"
             },
             "s": {
@@ -578,11 +573,11 @@ master_seed → master_key → account_0, account_1, ... → child_keys
 
 * 分发策略：
 
-  * shareA → 使用 App 端的 age 公钥加密后分发至管理员手机端；
+    * shareA → 使用 App 端的 age 公钥加密后分发至管理员手机端；
 
-  * shareB → 使用 sign-service 的 age 公钥加密后分发至 MPC 服务端；
+    * shareB → 使用 sign-service 的 age 公钥加密后分发至 MPC 服务端；
 
-  * shareC → 作为备用，保存在 Vault 或灾备节点。
+    * shareC → 作为备用，保存在 Vault 或灾备节点。
 
 ### 4.3.5 解密与存储
 
@@ -630,11 +625,11 @@ let signature = signer.sign(data, account_id).await?;
 
 * **mpc-client 内部处理**：
 
-  * 启动 Local Participant 本地 gRPC 服务（如果未启动）。
+    * 启动 Local Participant 本地 gRPC 服务（如果未启动）。
 
-  * 向 Local Participant 和 Server Participant 发送 gRPC 签名请求。
+    * 向 Local Participant 和 Server Participant 发送 gRPC 签名请求。
 
-  * 等待 MPC 签名完成并返回完整签名。
+    * 等待 MPC 签名完成并返回完整签名。
 
 ### 4.4.2 Participant 初始化
 
@@ -678,24 +673,24 @@ CGGMP21 协议采用多轮（multi-round）交互完成签名，每一轮包括�
 
 1. **本地计算**：
 
-   * Local Participant 使用 shareA 计算本轮消息（如承诺 commitment）。
+    * Local Participant 使用 shareA 计算本轮消息（如承诺 commitment）。
 
-   * Server Participant 使用 shareB 计算本轮消息。
+    * Server Participant 使用 shareB 计算本轮消息。
 
 2. **消息广播**：
 
-   * Local Participant 广播消息：
+    * Local Participant 广播消息：
 
    ```rust
    POST /rooms/{room_id}/broadcast
    Body: { sender: 0, receiver: null, body: <round_1_msg> }
    ```
 
-   * sign-gateway 通过 SSE 转发给 Server Participant。
+    * sign-gateway 通过 SSE 转发给 Server Participant。
 
 3. **消息接收**：
 
-   * Server Participant 通过 SSE 接收 Local Participant 的消息：
+    * Server Participant 通过 SSE 接收 Local Participant 的消息：
 
    ```plaintext
    SSE Event: data: {"sender":0,"receiver":null,"body":{...}}
@@ -703,19 +698,19 @@ CGGMP21 协议采用多轮（multi-round）交互完成签名，每一轮包括�
 
 4. **消息验证**：
 
-   * Server Participant 验证接收到的消息合法性。
+    * Server Participant 验证接收到的消息合法性。
 
-   * 若验证失败，协议中止。
+    * 若验证失败，协议中止。
 
 5. **角色互换**：
 
-   * Server Participant 广播本轮消息。
+    * Server Participant 广播本轮消息。
 
-   * Local Participant 通过 SSE 接收并验证。
+    * Local Participant 通过 SSE 接收并验证。
 
 6. **进入下一轮**：
 
-   * 双方完成本轮消息交换后，进入下一轮计算。
+    * 双方完成本轮消息交换后，进入下一轮计算。
 
 **完整轮次**：
 
@@ -733,23 +728,23 @@ CGGMP21 签名协议通常包括多轮交互（如 5-7 轮），每轮交换不�
 
 1. **Local Participant 完成最后一轮**：
 
-   * 收集所有轮次的消息。
+    * 收集所有轮次的消息。
 
-   * 组合 shareA 和 shareB 的部分签名。
+    * 组合 shareA 和 shareB 的部分签名。
 
-   * 生成完整的 ECDSA 签名（r, s, v）。
+    * 生成完整的 ECDSA 签名（r, s, v）。
 
 2. **签名验证**：
 
-   * Local Participant 内部验证签名有效性。
+    * Local Participant 内部验证签名有效性。
 
-   * 计算 recovery\_id (v)。
+    * 计算 recovery\_id (v)。
 
 3. **返回签名**：
 
-   * Local Participant 通过 gRPC 返回给 mpc-client。
+    * Local Participant 通过 gRPC 返回给 mpc-client。
 
-   * mpc-client 返回给 App 端。
+    * mpc-client 返回给 App 端。
 
 ### 4.4.5 连接清理
 
@@ -787,19 +782,143 @@ struct Msg<M> {
 
 ## 5.1 Blockchain Service
 
-### `POST /generate_task`
+### *`POST /api/v1/admin/collect/generatePlan`*
 
-生成新的归集任务文件。
+用于一次性批量生成指定链/币种的归集交易任务集合（Collection Plan），可选择是否对计划文件进行 age 加密。生成后的文件供管理员 App 下载、解密并发起后续 MPC 签名。
+
+
 
 请求示例
 
+```json
+{
+  "wallet_name": "Phemex",
+  "chain": "ethereum",
+  "coin": "USDT",
+  "target_address": "0xTargetHotWallet",
+  "max_tasks": 120,
+  "use_encryption": true
+}
+```
+
+
+
+字段说明
+
+* wallet\_name: 归集所属业务钱包（Phemex\_old）
+
+* chain / coin: 链与资产符号（ERC20、原生资产均可）
+
+* target\_address: 汇总目的地址（热钱包或聚合地址）
+
+* max\_tasks: 最多生成的交易任务数（0 或缺省时默认 100，上限 500）
+
+* use\_encryption: 是否对计划文件进行 age 加密（双接收者或单接收者）
+
+
+
 响应示例
 
-***
+```bash
+{
+  "s3_url": "https://s3.amazonaws.com/bucket/collection_plan_ethereum_USDT_20250120_120.enc",
+  "filename": "collection_plan_ethereum_USDT_20250120_120.enc"
+}
+```
+
+
+
+### 归集计划文件内容结构（未加密 JSON 原始体）
+
+```json
+{
+  "tasks": [
+    {
+      "account_id": 102345,
+      "digest": "0x0b9f7a4f5c4e...",
+      "wallet_name": "Phemex",
+      "chain": "ethereum",
+      "coin": "USDT",
+      "tx_type": "erc20",
+      "from": "0xUserDepositAddr1",
+      "to": "0xTargetHotWallet",
+      "value": "0x0000000000000000000000000000000000000000000000000000000005f5e100",
+      "nonce": "0x1a",
+      "gas_limit": "0x5208",
+      "gas_fee_cap": "0x59682f10",
+      "gas_tip_cap": "0x3b9aca00",
+      "data": "0xa9059cbb000000000000000000000000TargetHotWalletAddr0000000000000000000000000000000000000000000000000000000005f5e100",
+      "contract_address": "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+    },
+    {
+      "account_id": 102346,
+      "digest": "0x4e8c1fd77a41...",
+      "wallet_name": "Phemex",
+      "chain": "ethereum",
+      "coin": "USDT",
+      "tx_type": "erc20",
+      "from": "0xUserDepositAddr2",
+      "to": "0xTargetHotWallet",
+      "value": "0x00000000000000000000000000000000000000000000000000000000012a05f200",
+      "nonce": "0x07",
+      "gas_limit": "0x5208",
+      "gas_fee_cap": "0x59682f10",
+      "gas_tip_cap": "0x3b9aca00",
+      "data": "0xa9059cbb...",
+      "contract_address": "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+    },
+    {
+      "account_id": 812345,
+      "digest": "0x88d8fe12aa7c...",
+      "wallet_name": "Phemex",
+      "chain": "ethereum",
+      "coin": "ETH",
+      "tx_type": "native",
+      "from": "0xUserDepositAddr3",
+      "to": "0xTargetHotWallet",
+      "value": "0x38d7ea4c68000",
+      "nonce": "0x02",
+      "gas_limit": "0x5208",
+      "gas_fee_cap": "0x59682f10",
+      "gas_tip_cap": "0x3b9aca00"
+    }
+  ],
+  "total_count": 3,
+  "target_address": "0xTargetHotWallet",
+  "total_amount": "300.001",        // 聚合的 token 与原生资产折算（实现方定义）
+  "estimated_gas_cost": "0.015"
+}
+```
+
+
 
 ## 5.2 Sign Gateway
 
-### `GET /rooms/{room_id}/subscribe`
+Sign Gateway 现作为 **唯一的外部 gRPC 入口**（SignTx 代理）和 **SSE 消息协调中心**。客户端（mpc-client）只需连接 sign-gateway，即可完成签名触发与多轮协议交互。
+
+### gRPC 接口
+
+| Service | RPC | 描述 |
+|---------|-----|------|
+| `mpc.SignGateway` | `SignTx(SignMessage)` | 推荐接口，未来可在 Sign Gateway 侧扩展额外安全校验与速率限制。|
+| `mpc.Participant` | `SignTx(SignMessage)` | 向后兼容旧客户端的接口；内部同样转发到 sign-service。|
+
+* Sign Gateway 在接收到任一 `SignTx` 调用后，会：
+    1. 记录调用上下文（tx_id、account_id、客户端来源等）。
+    2. 将请求透传给部署在 Enclave 内的 sign-service。
+    3. 将 sign-service 返回的签名结果（或者错误）原样返回给客户端。
+
+* **调用流程**：
+    1. 客户端调用 `SignTx`，携带 `tx_id`、`execution_id`、`account_id`、待签名 digest 等参数。
+    2. Sign Gateway 进行基础校验（格式、字段完整性等）。
+    3. Sign Gateway 通过内部 gRPC 连接将请求转发至 Sign Service。
+    4. Sign Service 完成本地 share 加载与 MPC 协议计算（通过 SSE 消息交换）。
+    5. Sign Service 生成部分签名并返回给 Sign Gateway。
+    6. Sign Gateway 原样返回最终签名响应给客户端。
+
+### SSE 接口
+
+#### `GET /rooms/{room_id}/subscribe`
 
 订阅签名会话 room 的 SSE 事件流。
 
@@ -819,7 +938,7 @@ struct Msg<M> {
 data: {"sender":0,"receiver":null,"body":{...}}
 ```
 
-### `POST /rooms/{room_id}/broadcast`
+#### `POST /rooms/{room_id}/broadcast`
 
 广播消息给 room 内所有参与者。
 
@@ -850,21 +969,26 @@ data: {"sender":0,"receiver":null,"body":{...}}
 }
 ```
 
+**注意**：SSE / HTTP 接口仍然只接受来自受控网络（Local Participant、Sign Service）
+的访问，外部客户端只需调用 gRPC `SignTx` 即可。
+
 ## 5.3 Sign Service (gRPC)
 
-### `SignTx`
+Sign Service 部署在 Enclave 内部，对外不再直接暴露 gRPC 接口。所有 SignTx 请求都必须通过 Sign Gateway 代理进入，以确保安全边界与访问控制。
 
-执行 MPC 签名。
+### Upstream `SignTx`
+
+Sign Gateway 与 Sign Service 之间使用相同的 proto：
 
 **请求消息** (SignMessage)：
 
 ```protobuf
 message SignMessage {
     int32 tx_id = 1;              // 唯一交易 ID
-    bytes execution_id = 2;        // 执行 ID（UUID）
-    Chain chain = 3;               // 区块链类型
-    bytes data = 4;                // 签名数据（digest）
-    string account_id = 5;         // Account ID（用于索引 key share）
+    bytes execution_id = 2;       // 执行 ID（UUID）
+    Chain chain = 3;              // 区块链类型
+    bytes data = 4;               // 签名数据（digest）
+    string account_id = 5;        // Account ID（用于索引 key share）
 }
 ```
 
@@ -878,11 +1002,21 @@ message SignatureMessage {
 }
 ```
 
+* Enclave 内 Sign Service 仅接受来自 Sign Gateway 的 gRPC 连接（通过 mTLS / allowlist 限制）。
+* Sign Service 收到 SignMessage 后，执行以下流程：
+    1. 根据 account_id 加载 shareB，并校验 digest 是否与缓存任务一致；若不一致则拒签。
+    2. 发起 SSE 消息广播，与 Local Participant 完成 CGGMP21 多轮交互。
+    3. 生成部分签名并返回给 Sign Gateway；由 Local Participant 合成完整签名。
+
 ## 5.4 Admin App (mpc-client)
 
 ### `sign()`
 
-发起 MPC 签名。
+发起 MPC 签名。App 端通过 UniFFI 调用 Rust `mpc-client` 库内部的 Signer。Signer 会：
+
+1. 启动 / 连接本地 Local Participant gRPC 服务（用于与 Sign Gateway 的 SSE 协调）。
+2. 使用配置中的 `sign_gateway_host:port` 作为 gRPC 入口，调用 SignTx。
+3. 自动管理 SSE 订阅、room 创建、消息轮转与签名合成。
 
 **接口定义**（Rust）：
 
@@ -915,130 +1049,56 @@ let signature = try await signer.sign(
 )
 ```
 
+**配置要点**：
 
+* App 配置中必须指定 `sign_gateway_host` / `sign_gateway_port`；不再直接连接 sign-service。
+* 本地 participant gRPC 端口需要与 Sign Gateway SSE 端进行连通，便于订阅 room。
 
 ***
 
-# 6. 安全设计（Security Considerations）
-
-* 通信安全
-
-  * 所有通信均使用 TLS + 双向认证，确保端到端加密与身份可信。
-
-  * App 端与 sign-gateway、sign-service 之间的交互采用独立信道，避免中间人攻击。
-
-* Age Protocol 加密
-
-  * 使用 age protocol 对任务文件进行加密，指定**多个接收者公钥**。
-
-  * 确保只有持有对应 age 私钥的参与者才能解密任务文件。
-
-  * age 私钥存储在 Secure Storage 或安全环境中，不可导出。
-
-* Sign Service 安全边界
-
-  * 接口最小化
-
-    * sign-service 仅暴露必要接口：
-
-      * **`加载归集任务`**（接收加密任务文件并缓存待签名信息）；
-
-      * **`MPC 签名`**（通过 sign-gateway 接收签名请求并返回部分签名）。
-
-  * 任务文件处理
-
-    * 加密任务文件由 App 端与 sign-service 双方分别使用各自的 age 私钥解密。
-
-    * 双方独立校验交易内容与 digest，确保一致性。
-
-  * 签名安全控制
-
-    * sign-service 内部仅保存任务的摘要信息与签名上下文，不保存完整交易数据。
-
-    * 缓存信息仅驻留内存，签名完成后立即清除。
-
-    * 若 digest 或任务类型（归集 / 退款）与缓存不符，则拒绝签名请求。
-
-  * 数据隔离
-
-    * sign-service 与区块链服务之间无直接通信，所有任务交互均通过 App 端中转。
-
-    * sign-service 不持久化任何任务文件，仅在签名时根据 account\_id 加载对应的 key share。
+# 6. 安全性（Security）
 
 * Sign Gateway 安全
 
-  * sign-gateway 仅作为消息代理，不持有任何密钥材料或敏感数据。
+    * sign-gateway 仅作为消息与 gRPC 请求代理，不持有任何密钥材料或敏感数据。
 
-  * 所有 MPC 协议消息通过 SSE 实时转发，不做持久化存储。
+    * 所有外部 SignTx 请求必须通过 sign-gateway，sign-service 不对公网暴露接口。
 
-  * 实施访问控制与 CORS 策略，防止未授权访问。
+    * SSE / gRPC 接口均启用 mTLS、IP allowlist 与 CORS 控制，限制访问来源。
+
+    * Sign Gateway 记录 SignTx 调用上下文，提供后续审计追踪能力。
 
 * 签名请求校验
 
-  * 每次签名请求必须附带任务文件的 digest 哈希与 account\_id。
+    * Sign Gateway 对所有进入的 SignTx 请求进行基础校验（如格式、字段完整性等）。
 
-  * App 端和 sign-service 均校验 digest 是否与本地任务一致，不一致则拒签。
+    * Sign Service 在处理签名请求前，校验 digest 与缓存任务的一致性。
 
-  * 若任务类型（`operation_type`）与缓存任务不符（如归集/退款混用），同样拒签。
+    * 非法或异常请求将被拒绝，确保系统稳健性与安全性。
 
-* Room 隔离与防重放
+* 审计与合规
 
-  * 每个签名任务使用基于 tx\_id 的唯一 room\_id。
+    * 系统自动生成详细的审计日志，记录每个归集任务、签名步骤与交易广播。
 
-  * tx\_id 包含 instance\_id（时间戳+随机数）和 counter，确保全局唯一。
+    * 所有任务文件与签名记录均加密存档，支持追溯与合规审计。
 
-  * sign-gateway 确保消息仅在同一 room 内转发，避免跨任务消息混淆。
+    * 提供基于时间、账户、任务类型等多维度的审计查询接口。
 
-  * 签名完成后，room 自动清理，防止重放攻击。
+* 风险控制
 
-* Round-Based 协议安全
+    * 系统设定合理的归集频率与单笔限额，避免因市场波动导致的资金风险。
 
-  * 每轮消息包含轮次标识和密码学承诺。
+    * 紧急情况下支持人工干预与审批，确保资产安全。
 
-  * 参与方验证每轮消息的合法性和顺序。
+    * 定期进行安全演练与漏洞扫描，及时修复潜在风险点。
 
-  * 若任何一轮验证失败，协议立即中止。
+***
 
-  * 使用零知识证明确保参与方诚实计算。
+# 7. 参考文献（References）
 
-* MPC Shares 安全管理
-
-  * MPC shares 在冷钱包 Vault 环境中离线生成，不依赖 DKG。
-
-  * 使用 age protocol 加密后分发至各端，传输与存储全程加密。
-
-  * Local Participant 和 Server Participant 均在安全存储环境中解密并保存 share，不可导出。
-
-  * 签名时根据 account\_id 动态加载对应的 key share，避免误用。
-
-* 手机端安全控制
-
-  * App 启动与签名操作均需通过生物识别或安全 PIN 解锁。
-
-  * 本地存储的加密任务文件与 share 均受 Secure Storage 保护。
-
-  * age 私钥存储在 Secure Storage 中，不可导出。
-
-  * Local Participant 仅在签名时启动，完成后自动清理。
-
-* 网络与访问隔离
-
-  * sign-service 与区块链服务（Admin Console / Token Collect）之间无直接网络连接。
-
-  * 所有任务文件与签名请求均通过 App 端中转，确保隔离边界清晰。
-
-* 审计与可追溯性
-
-  * 所有任务生成、加载、签名与广播操作均记录审计日志。
-
-  * 日志包含操作时间、任务 digest、account\_id、操作类型与签名参与者标识。
-
-  * 审计日志采用防篡改存储机制，定期归档与备份。
-
-* Key Share 索引安全
-
-  * 确保 account\_id 与 key share 的映射关系准确无误。
-
-  * 定期审计 share 文件完整性与索引一致性。
-
-  * 避免因索引错误导致签名失败或使用错误的密钥。
+1. [MPC (Multi-Party Computation)](https://en.wikipedia.org/wiki/Multiparty_computation)
+2. [Threshold Cryptography](https://en.wikipedia.org/wiki/Threshold_cryptography)
+3. [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)
+4. [gRPC](https://grpc.io/)
+5. [age - a simple, secure, and modern encryption tool](https://age-encryption.org/)
+6. [CGGMP24 Protocol Specification](https://github.com/LFDT-Lockness/cggmp21)

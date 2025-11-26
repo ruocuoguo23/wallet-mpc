@@ -24,11 +24,10 @@ dictionary MpcConfig {
     u16 local_participant_port;
     u16 local_participant_index;
     sequence<KeyShare> key_shares;  // Multiple key share data
-    string sign_service_host;
-    u16 sign_service_port;
+    string sign_gateway_host;
+    u16 sign_gateway_port;
     string sse_host;
     u16 sse_port;
-    u16 sign_service_index;
     u16 threshold;
     u16 total_participants;
     string log_level;

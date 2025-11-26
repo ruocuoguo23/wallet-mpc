@@ -7,3 +7,8 @@ server:
 logging:
   level: "info"
   format: "json"  # or "text"
+grpc:
+  host: "127.0.0.1"
+  port: 50050
+sign_service:
+  url: "http://127.0.0.1:50051"

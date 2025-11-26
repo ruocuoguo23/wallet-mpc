@@ -30,11 +30,10 @@ pub struct SignerConfig {
     pub local_participant_port: u16,
     pub local_participant_index: u16,
     pub key_shares: Vec<KeyShareData>,  // 直接传入key share数据
-    pub sign_service_host: String,
-    pub sign_service_port: u16,
+    pub sign_gateway_host: String,
+    pub sign_gateway_port: u16,
     pub sse_host: String,
     pub sse_port: u16,
-    pub sign_service_index: u16,
     pub threshold: u16,
     pub total_participants: u16,
     pub log_level: String,
@@ -79,18 +78,18 @@ impl Signer {
         // Connect to remote services
         let mut remote_clients = Vec::new();
         
-        let sign_service_uri = format!("http://{}:{}", 
-                                     config.sign_service_host,
-                                     config.sign_service_port);
-        
-        info!("Connecting to sign-service at: {}", sign_service_uri);
+        let sign_service_uri = format!("http://{}:{}",
+                                     config.sign_gateway_host,
+                                     config.sign_gateway_port);
+
+        info!("Connecting to sign-gateway at: {}", sign_service_uri);
         let channel = Channel::from_shared(sign_service_uri)?
             .connect()
             .await
-            .context("Failed to connect to sign-service")?;
+            .context("Failed to connect to sign-gateway")?;
         
         remote_clients.push(ParticipantClient::new(channel));
-        info!("Connected to sign-service participant");
+        info!("Connected to sign-gateway participant");
 
         Ok(Self {
             config,
