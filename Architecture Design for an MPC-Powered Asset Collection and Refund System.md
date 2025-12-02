@@ -321,6 +321,44 @@ sequenceDiagram
 
     * 缓存信息仅驻留内存，签名完成后立即清除。
 
+### 3.2.6.1 Sign Service on AWS Nitro Enclave（方案 A：启动时预加载全部分片）
+
+为满足“云端参与方运行在可信执行环境且一次性加载数以万计 key share”的要求，Sign Service 采用 AWS Nitro Enclave 部署，并选择 **方案 A：实例启动时即预加载全部 key share 分片**。该方案适用于可预估的账户规模，避免会话期间的磁盘/网络抖动，代价是需要在 Enclave 预留充足内存。
+
+**拓扑与边界**
+- EC2 Parent（`c7i.metal` 等）承载 Nitro Enclave，Parent 仅负责拉取密文 share、运行 vsock 代理、采集日志，不持有明文密钥。
+- Sign Gateway 通过 VPC 私网访问 Parent 上的 gRPC/SSE 代理，代理再经 vsock 转发到 Enclave 内部 `sign-service`。
+- VPC 安全组仅放行 Sign Gateway → Parent 的 TLS 流量；Enclave 无直接网络，所有出入口均经 vsock。
+
+**Key Share 预加载流程（Scheme A）**
+1. Parent 启动时挂载只读 EBS（加密）或从 S3 下载 `service_key_shares.json.enc` 到 tmpfs。
+2. Parent 使用 AWS KMS + Enclave Attestation（vsock attester）完成双向校验后，将密文 share 下发至 Enclave Loader。
+3. Enclave Loader 解密（age/KMS session key）、解析全部 account 分片，按 account_id 构建内存字典（可用压缩或 mmap-like chunk 以节省内存）。
+4. 预加载完成后立即零化解密缓冲，并把 share 仅保存在 Enclave 内存；Parent 端缓存全部销毁。
+5. 在签名会话中，`sign-service` 直接从内存字典获取 share，避免 IO；会话结束后只清理临时 MPC 状态，share 常驻内存直到实例重启。
+
+**通信与代理**
+- gRPC：Parent 运行 `enclave-proxy`（可复用 `sign-gateway/src/grpc.rs` 生成的客户端）监听 `0.0.0.0:50051`，与 Sign Gateway 建立 mTLS，随后通过 vsock `CID:16, PORT:50051` 将请求透传。
+- SSE：Sign Service 仍需访问 Sign Gateway 的 SSE 端点，Parent 提供 HTTP Client 代理（curl-based relay or Hyper bridge）在 vsock 与外部网络间搬运 SSE 流，并强制只允许白名单 URL。
+- 所有请求在进入 Enclave 前再次校验 attestation measurement（PCR hash），防止被调包。
+
+**启动与运维**
+1. 使用 Nitro CLI 构建 Enclave 镜像（EIF），包含 `sign-service` 二进制与 `service_key_shares.json` 解析模块。
+2. Parent systemd 启动顺序：KMS 解封 → Nitro Enclave run → vsock proxies → health-check（向 Sign Gateway 报告 attestation 和 share 载入完成时间戳）。
+3. 失败恢复：若预加载失败（如 JSON 损坏/内存不足），Parent 直接销毁 Enclave 并告警，阻止任何签名请求。
+4. 日志：Enclave 内部通过 vsock `log` 通道流向 Parent，再转发到 CloudWatch；敏感数据默认打 redact。
+
+**安全与监控要点**
+- 必须记录每次启动的 attestation doc 与 share 的 SHA256 指纹，写入审计链路。
+- 设定内存水位报警（例如 70%）和 MPC 会话并发上限，防止 OOM 影响 Enclave。
+- Sign Gateway 定期发起健康探测（gRPC ping + SSE 订阅校验），超过阈值自动剔除该 Enclave 节点。
+- 应急手册：在 `docs/` 添加“Sign-Service Nitro Enclave Runbook”，涵盖 KMS key rotation、EIF 升级、share 重新加密的步骤。
+
+**方案 A 适用性评估**
+- ✅ 优点：无运行期加载抖动，签名时延稳定；share 不需跨边界多次传输。
+- ⚠️ 成本：Enclave 内存需匹配 key share 体积（示例：1 万账户约 1.5~2 GB）；重启耗时（minutes）需通过灰度方式滚动。
+- 若后续账户规模超过内存预算，可再引入“方案 B：按需流式加载 + LRU”作为扩展。
+
 ### 3.2.7 Ethereum 网络
 
 * 接收来自 Token Collect 服务的广播交易。
@@ -480,7 +518,7 @@ master_seed → master_key → account_0, account_1, ... → child_keys
           {
             "N": {
               "radix": 16,
-              "value": "6ce3b8e10c2346a63f84f0597052353865aa883c3a033695ea01c0293d3c9ba6d5c91023f012ad071cbd641968cf47540afb9b365f0473c939fcf646ef9801ef03e7c0c4099ae1d55fd811d45338e5d37f846f92fea8046199aae0ff86c7289a3c0aabace873ec9a2492de23f3a2edca67d5ebc236a126f6c4c71a08c4d9d65b382d657f7cc7237534297bd72bc65a5ba8aaacbd359fb8bb32199056ad2504a87d15ebbdb6c27e197cb8f276312125369ddd2b54011a168018cc2618931789074c625a6ba4b6f7e9c9964ded7ac2cb5f2d5b1779b419dfac512e0d16c89ec127cec5a52b61b6430dcd5a63a4fc420f88763feec922e50670f81352acaead04bf88b0b03a2078fd0b249254b30e8d021c1b5aaf70e7bce20475684db80513c1bfdcfec527ac2c4625ed3ba190cccfec594e052be45e343331ba26987893008c1f926f15edd989d04deabf9599df0037983633c6de2e0f5a87422ff93033564a855775f2922ae827414afb1d2d7456f91f172e7c705c26229e6ebd0fc6914351bd"
+              "value": "6ce3b8e10c2346a63f84f0597052353865aa883c3a033695ea01c0293d3c9ba6d5c91023f012ad071cbd641968cf47540afb9b365f0473c939fcf646ef9801ef03e7c0c4099ae1d55fd811d45338b5d37f846f92fea8046199aae0ff86c7289a3c0aabace873ec9a2492de23f3a2edca67d5ebc236a126f6c4c71a08c4d9d65b382d657f7cc7237534297bd72bc65a5ba8aaacbd359fb8bb32199056ad2504a87d15ebbdb6c27e197cb8f276312125369ddd2b54011a168018cc2618931789074c625a6ba4b6f7e9c9964ded7ac2cb5f2d5b1779b419dfac512e0d16c89ec127cec5a52b61b6430dcd5a63a4fc420f88763feec922e50670f81352acaead04bf88b0b03a2078fd0b249254b30e8d021c1b5aaf70e7bce20475684db80513c1bfdcfec527ac2c4625ed3ba190cccfec594e052be45e343331ba26987893008c1f926f15edd989d04deabf9599df0037983633c6de2e0f5a87422ff93033564a855775f2922ae827414afb1d2d7456f91f172e7c705c26229e6ebd0fc6914351bd"
             },
             "s": {
               "radix": 16,
@@ -540,22 +578,6 @@ master_seed → master_key → account_0, account_1, ... → child_keys
             "t": {
               "radix": 16,
               "value": "5bfe3b78b31d333dad0fedea9e8c1a0c080801b863db98bd4ae6cceef202b16a5bc0a7d733ee09fb7006deae2eb7f4e8443c72e6921a832127916f89dc1a192a49922d0b50a201c5ae4fddfaeba7e45908dcf93fc41ce1a9fc236911ee439ec9683b86c2a2e03c6ec14961e16acbb98c3fbdae9538b26c4d7882770083190540ad24ff2dcacd6cea37e8205a9b9a9a00f46e2360cbe956e9e8d400ff999a3724d1eedf30fcba4553e5128635565cb43fecda6b780c222d50fa71f170d42cf1d3e0a0d0fd6613c60d64d09f7fb04558ff60a608cc60fc7efb7493433204372e5ba970b9edbdc9672461e87530fd29527f256d20ea5f00eca4a66bbe18fcb2e53ad562f7294d0804127be539939757c18844ff9486c47faffe9ba0acafd3b0fe004ac26c23bc48144ce776114afe1e14a90bfa0b671a2ae7b25928b1ca7a868280030d033b8a30ebbf28aa575cbca8f93946ed275bd566c40c89e4c8badc3d1aa49f1048a89cd1eb83ee4bac2e91b1f19dc457538c097c3bd88161c2dc4573f625"
-            },
-            "multiexp": null,
-            "crt": null
-          },
-          {
-            "N": {
-              "radix": 16,
-              "value": "6ce3b8e10c2346a63f84f0597052353865aa883c3a033695ea01c0293d3c9ba6d5c91023f012ad071cbd641968cf47540afb9b365f0473c939fcf646ef9801ef03e7c0c4099ae1d55fd811d45338e5d37f846f92fea8046199aae0ff86c7289a3c0aabace873ec9a2492de23f3a2edca67d5ebc236a126f6c4c71a08c4d9d65b382d657f7cc7237534297bd72bc65a5ba8aaacbd359fb8bb32199056ad2504a87d15ebbdb6c27e197cb8f276312125369ddd2b54011a168018cc2618931789074c625a6ba4b6f7e9c9964ded7ac2cb5f2d5b1779b419dfac512e0d16c89ec127cec5a52b61b6430dcd5a63a4fc420f88763feec922e50670f81352acaead04bf88b0b03a2078fd0b249254b30e8d021c1b5aaf70e7bce20475684db80513c1bfdcfec527ac2c4625ed3ba190cccfec594e052be45e343331ba26987893008c1f926f15edd989d04deabf9599df0037983633c6de2e0f5a87422ff93033564a855775f2922ae827414afb1d2d7456f91f172e7c705c26229e6ebd0fc6914351bd"
-            },
-            "s": {
-              "radix": 16,
-              "value": "4a8d5a66667200212dcaa8957f1e5a8bb9d9ac6aae5838e9466980f5e187cd632545d540251c976ae3e38d1a2b173887c56ec7aaa12d1bed92b0b8eb5e1b28464e2218e5f5c5256b6093db9f866a976a86be6871467553731bcf93552f7c34e9b118a3523423e385e322623b77fd6fc6b68d13da48aa7c2bf1091e3bf950cbccaaf0a6897a97983eadcb8708037f82601f057424daea5e30662d761beed1c75c30a336e0daa2f241e252c6a1a64690063e92adf1376fda138bfa7ae6c814430f88109a04b12e398e1f6be721d0b5e8ce6cc2628e8db830fcf3d3f7b217defcd11b82923a0bd1c96487c2e0dac191ee7b42f22b237d60ad18bc02b49c4f5b2f62aa079ca00bad6d4b820eb46931f38cf1ae0fc06d129ba61985943e02e094b5b3d3d5d2e557a46b2e1d8d79e3325b9caae369db444b2ad649884da6961483ad257065ebd9706a3b2416d0cc92798f7e131163e31ca90a11c543ea7753b1ca8446a105830b15e6377594d1a9c9bcd14731c6acc468ebd4f3b01c59001b59685ef4"
-            },
-            "t": {
-              "radix": 16,
-              "value": "1f70bf9a874916c30bf7a98e374993531712b1d55509480e6b1ea9f006bd95bb09070c714f712e45e9f751a152367ef93a747672306dcd02a3405d1ea64b851a2fd556e10e047561f96bbe91c199843b4e64c7801ff440a2f0296ca4a10262b78abef75cf19cc6bb0c491c76f4efd86c403b24ada8518c105f596506d6b87772d9ff50f13b93c2321cc6219cf4571b44497d9c9663e9bf9ae2d1c2a135f3aff63e64d6f8a1f977631a6e7db0db8c180ed1cb70eede1815bcd4ea77389522ba604e3a67c6bb497fb2f7bcd2b9c5568d5f45fb710e1e01bc50ee58d3627468d01c5c8a4f2b079c00ada53fc1344dc69c4a5fca89b808454aacbfd744716d442eab6e69084e9c1ac4feb199216ebbe766cd5db480b6716787d8367d6648d173b62f29b3370661e56b161e4b0b07306677d08e58173ac023916d6790526a3354bbc33892870366c19138792d3a6d658028792b9c8faeb5d063a7cde483886c9b42b494f1350522cd83ca45c2aec771fe3ffb1efb6b800ad2d2b4a2cc46ef8f68f4d0"
             },
             "multiexp": null,
             "crt": null
