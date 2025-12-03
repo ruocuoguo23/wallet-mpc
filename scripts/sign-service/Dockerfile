@@ -2,23 +2,18 @@
 
 FROM alpine:3.20 AS builder
 
-RUN apk add --no-cache build-base curl git musl-dev openssl-dev pkgconfig m4
+RUN apk add --no-cache build-base curl git musl-dev openssl-dev pkgconfig m4 protobuf-dev protobuf
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && \
     rustup target add x86_64-unknown-linux-musl
 WORKDIR /app
-COPY Cargo.toml Cargo.lock ./
-COPY rust-toolchain.toml ./
-COPY client ./client
-COPY mpc-client ./mpc-client
+COPY sign-service/rust-toolchain.toml ./rust-toolchain.toml
+COPY sign-service/Cargo.local.toml ./Cargo.toml
 COPY sign-service ./sign-service
-COPY sign-gateway ./sign-gateway
 COPY participant ./participant
 COPY proto ./proto
-COPY sse ./sse
-COPY key-gen ./key-gen
 COPY vendor ./vendor
-RUN cargo build --release --package sign-service --bin sign-service --target x86_64-unknown-linux-musl
+RUN cargo build --manifest-path ./Cargo.toml --package sign-service --bin sign-service --target x86_64-unknown-linux-musl --release
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates socat iproute2 dumb-init
