@@ -2,7 +2,7 @@
 
 FROM alpine:3.20 AS builder
 
-RUN apk add --no-cache build-base curl git musl-dev openssl-dev pkgconfig
+RUN apk add --no-cache build-base curl git musl-dev openssl-dev pkgconfig m4
 ENV PATH="/root/.cargo/bin:${PATH}"
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && \
     rustup target add x86_64-unknown-linux-musl
