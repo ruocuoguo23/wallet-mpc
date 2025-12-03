@@ -19,4 +19,4 @@ logging:
 mpc:
   threshold: 2
   total_participants: 3
-  key_share_file: "service_key_shares.json"
+  key_share_file: "/app/service_key_shares.json"

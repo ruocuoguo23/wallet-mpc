@@ -12,8 +12,8 @@ ENV PORT=50051 \
     VSOCK_PORT=50051 \
     APP_BIN=/usr/local/bin/sign-service \
     ENCLAVE_EGRESS_ENABLED=1 \
-    ENCLAVE_EGRESS_PORT=4000 \
-    HOST_EGRESS_VSOCK_PORT=4000 \
+    ENCLAVE_EGRESS_PORT=8080 \
+    HOST_EGRESS_VSOCK_PORT=8080 \
     HOST_PARENT_CID=3
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 CMD ["/usr/local/bin/enclave-entrypoint.sh", "/usr/local/bin/sign-service", "/app/config/sign-service.yaml"]
