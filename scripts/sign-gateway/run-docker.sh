@@ -5,6 +5,7 @@ IMAGE_NAME=${IMAGE_NAME:-sign-gateway}
 IMAGE_TAG=${IMAGE_TAG:-local}
 CONTAINER_NAME=${CONTAINER_NAME:-sign-gateway}
 HOST_PORT=${HOST_PORT:-8080}
+HOST_GRPC_PORT=${HOST_GRPC_PORT:-50050}
 HOST_CONFIG_PATH=${HOST_CONFIG_PATH:-config/sign-gateway.yaml}
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -27,9 +28,10 @@ CONFIG_ABS=$(readlink -f "${HOST_CONFIG_PATH}" 2>/dev/null || realpath "${HOST_C
 docker run -d \
     --name "${CONTAINER_NAME}" \
     -p "${HOST_PORT}:8080" \
+    -p "${HOST_GRPC_PORT}:50050" \
     -v "${CONFIG_ABS}:/app/config/sign-gateway.yaml:ro" \
     --add-host host.docker.internal:host-gateway \
     "${IMAGE_NAME}:${IMAGE_TAG}" \
     /usr/local/bin/sign-gateway /app/config/sign-gateway.yaml
 
-echo "Container ${CONTAINER_NAME} running on port ${HOST_PORT}"
+echo "Container ${CONTAINER_NAME} running: HTTP ${HOST_PORT}, gRPC ${HOST_GRPC_PORT}"
