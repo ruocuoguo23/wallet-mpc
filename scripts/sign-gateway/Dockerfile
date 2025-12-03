@@ -6,9 +6,9 @@ WORKDIR /app
 COPY config/sign-gateway.yaml /app/config/sign-gateway.yaml
 COPY target/sign-gateway/sign-gateway /usr/local/bin/sign-gateway
 RUN chmod +x /usr/local/bin/sign-gateway
+EXPOSE 8080 50050
 ENV PORT=8080 \
     HOST=0.0.0.0 \
     CONFIG_PATH=/app/config/sign-gateway.yaml
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 CMD ["/usr/local/bin/sign-gateway", "/app/config/sign-gateway.yaml"]
-
