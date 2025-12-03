@@ -3,8 +3,8 @@ set -euo pipefail
 
 EIF_PATH=${EIF_PATH:-target/sign-service.enclave.eif}
 ENCLAVE_NAME=${ENCLAVE_NAME:-sign-service-enclave}
-CPU_COUNT=${CPU_COUNT:-4}
-MEMORY_MIB=${MEMORY_MIB:-1024}
+CPU_COUNT=${CPU_COUNT:-2}
+MEMORY_MIB=${MEMORY_MIB:-512}
 CONSOLE_FILE=${CONSOLE_FILE:-target/sign-service-enclave-console.log}
 HOST_GRPC_PORT=${HOST_GRPC_PORT:-50051}
 VSOCK_PORT=${VSOCK_PORT:-50051}
