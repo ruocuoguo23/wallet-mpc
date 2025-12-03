@@ -28,6 +28,7 @@ docker run -d \
     --name "${CONTAINER_NAME}" \
     -p "${HOST_PORT}:8080" \
     -v "${CONFIG_ABS}:/app/config/sign-gateway.yaml:ro" \
+    --add-host host.docker.internal:host-gateway \
     "${IMAGE_NAME}:${IMAGE_TAG}" \
     /usr/local/bin/sign-gateway /app/config/sign-gateway.yaml
 
