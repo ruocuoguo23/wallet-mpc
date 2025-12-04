@@ -9,6 +9,15 @@ These scripts package the `sign-service` binary into a Nitro Enclave-friendly Do
 - `run-enclave.sh`: Launches the EIF and sets up socat bridges.
 - `stop-enclave.sh`: Terminates the enclave.
 
+## Repository Setup
+
+To make sure `kmstool-enclave-cli` sources are available, initialize submodules after cloning the repo:
+
+```bash
+# from repo root
+git submodule update --init --recursive
+```
+
 ## Build Prerequisites (build host)
 Ensure the EC2 builder has:
 - Rust toolchain (`rustup`, `cargo`) with target `x86_64-unknown-linux-musl` installed.

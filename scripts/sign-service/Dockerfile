@@ -17,6 +17,6 @@ ENV PORT=50051 \
     ENCLAVE_EGRESS_PORT=8080 \
     HOST_EGRESS_VSOCK_PORT=8080 \
     HOST_PARENT_CID=3 \
-    LD_LIBRARY_PATH="/usr/lib:${LD_LIBRARY_PATH}"
+    LD_LIBRARY_PATH="/usr/lib:/lib"
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 CMD ["/usr/local/bin/enclave-entrypoint.sh", "/usr/local/bin/sign-service", "/app/config/sign-service.yaml"]
