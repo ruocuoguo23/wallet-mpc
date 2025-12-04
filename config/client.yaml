@@ -2,7 +2,7 @@
 
 # Gateway configuration
 gateway:
-  url: "http://127.0.0.1:8080"
+  url: "http://34.238.64.118:8080"
 
 # Local participant configuration
 local_participant:
@@ -14,7 +14,7 @@ local_participant:
 # Remote sign-gateway configuration
 remote_services:
   sign_gateway:
-    participant_host: "127.0.0.1"
+    participant_host: "34.238.64.118"
     participant_port: 50050
 
 # Ethereum provider configuration

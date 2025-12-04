@@ -30,4 +30,3 @@ Scripts in this directory build and run the `sign-gateway` service inside a plai
 ```
 
 Adjust `config/sign-gateway.yaml` before building if you need different host/port or CORS settings; the image copies the file verbatim into `/app/config/sign-gateway.yaml`.
-

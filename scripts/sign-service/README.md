@@ -13,15 +13,22 @@ These scripts package the `sign-service` binary into a Nitro Enclave-friendly Do
 Ensure the EC2 builder has:
 - Rust toolchain (`rustup`, `cargo`) with target `x86_64-unknown-linux-musl` installed.
 - `protoc` (protobuf compiler).
+- Docker (required to build `kmstool-enclave-cli`).
 - Build essentials: `clang`/`gcc`, `musl-tools`, `pkg-config`, `openssl`/`openssl-devel`, `m4`.
 
 ## Usage
 
 ```bash
-# On the builder (produces target/sign-service-enclave/sign-service)
+# On the builder (produces target/sign-service-enclave/ artifacts)
 ./scripts/sign-service/build_server.sh
 
-# Then package the enclave image using the prebuilt binary
+# The step above builds:
+#   target/sign-service-enclave/sign-service
+#   target/sign-service-enclave/kmstool_enclave_cli
+#   target/sign-service-enclave/libnsm.so
+# Ensure these files exist before building the Docker image.
+
+# Then package the enclave image using the prebuilt binaries
 ./scripts/sign-service/build-docker.sh
 ./scripts/sign-service/build-eif.sh
 HOST_EGRESS_TARGET_HOST=127.0.0.1 HOST_EGRESS_TARGET_PORT=8080 ./scripts/sign-service/run-enclave.sh
