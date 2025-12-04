@@ -1,3 +1,4 @@
+use std::env;
 use std::fs;
 use std::collections::HashMap;
 
@@ -11,6 +12,9 @@ use cggmp21::security_level::SecurityLevel128;
 use cggmp21::supported_curves::Secp256k1;
 
 use crate::config::SignServiceConfig;
+
+/// Key share file environment variable name
+const KEY_SHARE_FILE_ENV: &str = "SIGN_SERVICE_KEY_SHARE_FILE";
 
 /// Load key shares from configured file path
 pub fn load_key_shares(key_share_file: &str) -> Result<HashMap<String, KeyShare<Secp256k1, SecurityLevel128>>> {
@@ -26,11 +30,28 @@ pub fn load_key_shares(key_share_file: &str) -> Result<HashMap<String, KeyShare<
     Ok(key_shares)
 }
 
+/// Resolve key share file path: environment variable takes priority over config
+fn resolve_key_share_file(config_path: &str) -> String {
+    match env::var(KEY_SHARE_FILE_ENV) {
+        Ok(env_path) if !env_path.is_empty() => {
+            info!("Using key share file from environment variable {}: {}", KEY_SHARE_FILE_ENV, env_path);
+            env_path
+        }
+        _ => {
+            info!("Using key share file from config: {}", config_path);
+            config_path.to_string()
+        }
+    }
+}
+
 pub async fn run_services(config: SignServiceConfig) -> Result<()> {
     info!("Initializing Participant Server...");
 
-    // Load key shares from the configuration file
-    let key_shares = load_key_shares(&config.mpc.key_share_file)
+    // Resolve key share file path (env var takes priority)
+    let key_share_file = resolve_key_share_file(&config.mpc.key_share_file);
+
+    // Load key shares from the resolved file path
+    let key_shares = load_key_shares(&key_share_file)
         .context("Failed to load key shares")?;
     
     // Log the loaded key shares information
