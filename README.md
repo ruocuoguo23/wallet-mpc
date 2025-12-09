@@ -1,7 +1,9 @@
 # Wallet MPC
 A Multi-Party Computation (MPC) wallet solution based on the CGGMP21 threshold signature scheme, designed for secure, decentralized cryptocurrency signing operations.
+
 ## Overview
 Wallet MPC implements a 3-of-2 threshold signature scheme, where any 2 out of 3 participants can collaboratively generate valid signatures without any single party having access to the complete private key. This architecture provides enhanced security for cryptocurrency wallets by eliminating single points of failure.
+
 ### Key Features
 - **Threshold Signatures**: 3-of-2 MPC signing scheme using CGGMP21 protocol
 - **No Single Point of Failure**: Private keys are split across multiple parties
@@ -9,13 +11,17 @@ Wallet MPC implements a 3-of-2 threshold signature scheme, where any 2 out of 3 
 - **Real-time Communication**: SSE (Server-Sent Events) based message coordination
 - **Secp256k1 Support**: Compatible with Bitcoin, Ethereum, and other major blockchains
 - **HD Wallet Support**: Hierarchical Deterministic wallet implementation (SLIP-10)
+- **AWS Nitro Enclave Support**: Hardware-level isolation for sign-service deployment
+
 ## Architecture
+
+### Standard Deployment
 ```
-┌───────────────���─────────────────────────────────────────────┐
-│                     Sign Gateway                             │
-│                  (SSE Message Broker)                        │
-│                    Port: 8080                                │
-└────────────────┬────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                     Sign Gateway                               │
+│                  (SSE Message Broker)                          │
+│                    Port: 8080                                  │
+└────────────────┬───────────────────────────────────────────────┘
                  │
     ┌────────────┴────────────────┐
     │                             │
@@ -30,6 +36,44 @@ Wallet MPC implements a 3-of-2 threshold signature scheme, where any 2 out of 3 
 └─────────────────┘    └─────────────────────┘
          Any 2 participants can sign ✓
 ```
+
+### Nitro Enclave Deployment (Production)
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              EC2 Parent Host                                  │
+│                                                                               │
+│  ┌─────────────┐    ┌─────────────┐    ┌───────────────────────────────────┐ │
+│  │  S3 Bucket  │───▶│ run-enclave │───▶│         Nitro Enclave             │ │
+│  │  • age.enc  │    │    .sh      │    │                                   │ │
+│  │  • shares   │    │             │    │  ┌─────────────────────────────┐  │ │
+│  └─────────────┘    │ 1. Fetch    │    │  │  enclave-entrypoint.sh      │  │ │
+│                     │    IMDS     │    │  │                             │  │ │
+│  ┌─────────────┐    │    creds    │    │  │  1. Receive AWS creds       │  │ │
+│  │    IMDS     │───▶│             │    │  │  2. Receive age.key.enc     │  │ │
+│  │ (169.254.   │    │ 2. Download │    │  │  3. Receive shares.age      │  │ │
+│  │  169.254)   │    │    from S3  │    │  │  4. kmstool decrypt         │  │ │
+│  └─────────────┘    │             │    │  │  5. age decrypt shares      │  │ │
+│                     │ 3. Start    │    │  │  6. Launch sign-service     │  │ │
+│  ┌─────────────┐    │    enclave  │    │  └─────────────────────────────┘  │ │
+│  │ vsock-proxy │◀──▶│             │    │                                   │ │
+│  │  port 5000  │    │ 4. Send     │    │  ┌─────────────────────────────┐  │ │
+│  │  → KMS      │    │    secrets  │    │  │     sign-service            │  │ │
+│  └─────────────┘    │    via      │    │  │     (gRPC :50051)           │  │ │
+│                     │    vsock    │    │  └─────────────────────────────┘  │ │
+│                     └─────────────┘    └───────────────────────────────────┘ │
+│                                                                               │
+│  Vsock Ports:                                                                 │
+│    • 5000: KMS proxy (vsock-proxy → kms.amazonaws.com:443)                   │
+│    • 7100: AWS credentials injection                                          │
+│    • 7101: KMS-encrypted age private key                                      │
+│    • 7102: age-encrypted key shares                                           │
+│    • 50051: gRPC ingress (host TCP → enclave)                                │
+│    • 8080: Egress bridge (enclave → host TCP)                                │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+For detailed Enclave deployment documentation, see [Sign-service-in-enclave.md](./Sign-service-in-enclave.md).
+
 ## Core Components
 ### 1. mpc-client
 **Location**: `mpc-client/`
@@ -62,13 +106,17 @@ cargo run --bin uniffi-bindgen generate src/mpc_client.udl --language swift
 ```
 ### 2. sign-service
 **Location**: `sign-service/`
+
 A server-side MPC participant that runs as a standalone service. It maintains key shares and participates in the MPC signing protocol.
+
 **Features**:
 - Server-side participant implementation
 - Connects to sign-gateway for message coordination
 - Manages multiple account key shares
 - gRPC API for signing requests
 - Automatic reconnection and error recovery
+- **AWS Nitro Enclave support** for hardware-level isolation
+
 **Configuration** (`config/sign-service.yaml`):
 ```yaml
 gateway:
@@ -82,11 +130,25 @@ mpc:
   total_participants: 3
   key_share_file: "service_key_shares.json"
 ```
-**Run**:
+
+**Environment Variables**:
+| Variable | Description |
+|----------|-------------|
+| `SIGN_SERVICE_KEY_SHARE_FILE` | Override key share file path (used by Enclave) |
+
+**Run** (Standard):
 ```bash
 cargo run --bin sign-service
 # or with custom config
 cargo run --bin sign-service -- config/sign-service.yaml
+```
+
+**Run** (Nitro Enclave):
+```bash
+# See scripts/sign-service/README.md for detailed instructions
+export AGE_KEY_S3_URI=s3://bucket/enclave/age-private.key.enc
+export KEY_SHARES_S3_URI=s3://bucket/enclave/service_key_shares.json.age
+./scripts/sign-service/run-enclave.sh
 ```
 ### 3. sign-gateway
 **Location**: `sign-gateway/`
@@ -218,12 +280,21 @@ wallet-mpc/
 }
 ```
 ## Security Considerations
+
 ### Key Share Distribution
 - Each participant holds ONE key share
 - Minimum 2 participants needed to sign (threshold)
 - Total 3 key shares generated
 - No single participant can sign alone
 - No single point of compromise
+
+### Nitro Enclave Security (Production)
+- **KMS Attestation**: Decrypt operations require valid enclave PCR0 measurement
+- **Memory Isolation**: Key shares exist only in enclave memory, inaccessible to host
+- **Secure Injection**: Encrypted artifacts transmitted via vsock, decrypted inside enclave
+- **Key Destruction**: Age private key is immediately destroyed after decrypting key shares
+- **Audit Trail**: All KMS operations logged in CloudTrail
+
 ### Best Practices
 1. **Key Storage**: Store key shares in secure, encrypted storage
 2. **Transport Security**: Use TLS for all network communication in production
@@ -231,6 +302,8 @@ wallet-mpc/
 4. **Monitoring**: Log all signing operations for audit
 5. **Backup**: Securely backup key shares in separate locations
 6. **Network Isolation**: Run sign-gateway in a trusted network environment
+7. **Enclave Deployment**: Use Nitro Enclave for production sign-service instances
+8. **KMS Key Policy**: Restrict decryption to specific enclave PCR0 measurements
 ## Development
 ### Project Structure
 ```
@@ -263,7 +336,10 @@ cargo fmt
 cargo clippy
 ```
 ## Deployment
-### Production Checklist
+
+### Standard Deployment
+
+#### Production Checklist
 - [ ] Enable TLS for sign-gateway
 - [ ] Implement authentication for sign-service
 - [ ] Set up secure key share storage (HSM recommended)
@@ -273,14 +349,46 @@ cargo clippy
 - [ ] Regular security audits
 - [ ] Backup key shares securely
 - [ ] Document disaster recovery procedures
-### Docker Deployment (Optional)
+
+#### Docker Deployment
 ```bash
 # Build sign-gateway
 docker build -t sign-gateway -f Dockerfile.gateway .
+
 # Build sign-service
 docker build -t sign-service -f Dockerfile.service .
+
 # Run with docker-compose
 docker-compose up -d
+```
+
+### Nitro Enclave Deployment (Recommended for Production)
+
+#### Prerequisites
+- EC2 instance with Nitro Enclave support
+- Instance role with KMS and S3 permissions
+- KMS key with appropriate key policy
+
+#### Production Checklist
+- [ ] Configure KMS key policy with PCR0 condition
+- [ ] Upload encrypted artifacts to S3
+- [ ] Set up IAM role with minimal permissions
+- [ ] Configure vsock-proxy for KMS access
+- [ ] Enable CloudTrail for KMS audit logs
+- [ ] Set up enclave health monitoring
+- [ ] Document PCR0 measurement for each release
+
+#### Enclave Scripts
+```
+scripts/sign-service/
+├── build_server.sh       # Build sign-service binary and kmstool
+├── build-docker.sh       # Build Docker image for enclave
+├── build-eif.sh          # Build Enclave Image File (EIF)
+├── run-enclave.sh        # Start enclave with secret injection
+├── stop-enclave.sh       # Stop running enclave
+├── enclave-entrypoint.sh # Enclave internal startup script
+├── Dockerfile            # Enclave image definition
+└── README.md             # Detailed documentation
 ```
 ## Troubleshooting
 ### Common Issues
@@ -343,6 +451,8 @@ Contributions are welcome! Please:
 - [cggmp21 Rust Implementation](https://github.com/ZenGo-X/multi-party-ecdsa)
 - [UniFFI Documentation](https://mozilla.github.io/uniffi-rs/)
 - [Threshold Signatures Overview](https://en.wikipedia.org/wiki/Threshold_cryptosystem)
+- [AWS Nitro Enclaves User Guide](https://docs.aws.amazon.com/enclaves/latest/user/nitro-enclave.html)
+- [kmstool-enclave-cli](https://github.com/aws/aws-nitro-enclaves-sdk-c)
 ## Support
 For questions and support:
 - Contact: [jeff.wu@cmexpro.com]
