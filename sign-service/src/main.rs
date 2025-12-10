@@ -54,7 +54,7 @@ logging:
   format: "json"
 mpc:
   threshold: 2
-  total_participants: 3
+  total_participants: 2
   key_share_file: "participant/key_share_1.json"
 "#;
 
@@ -80,7 +80,7 @@ logging:
   format: "json"
 mpc:
   threshold: 2
-  total_participants: 3
+  total_participants: 2
   key_share_file: "participant/key_share_1.json"
 "#;
 

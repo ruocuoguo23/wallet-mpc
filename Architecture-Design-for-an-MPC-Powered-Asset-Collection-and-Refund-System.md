@@ -4,7 +4,7 @@ Phemex Global 的 Ethereum 用户入金地址目前由冷钱包统一管理，�
 
 为此，我们设计一套基于 MPC（多方安全计算） 的资产归集与退款系统，以实现 安全、可审计、可自动化 的资产管理流程。
 
-本系统基于 CGGMP24 阈值签名协议（3‑2 模式），通过将原冷钱包主密钥拆分为三个 share，并分布式存储在不同安全环境中（手机端 + 云端 Enclave + 备用节点），**实现无需集中私钥的安全签名与资产归集**。
+本系统基于 CGGMP21 阈值签名协议（2‑2 模式），通过将原冷钱包主密钥拆分为两个 share，并分布式存储在不同安全环境中（手机端 + 云端 Enclave），**实现无需集中私钥的安全签名与资产归集**。
 
 系统主要功能包括：
 
@@ -30,7 +30,7 @@ Phemex Global 的 Ethereum 用户入金地址目前由冷钱包统一管理，�
 
 2. 资产安全
 
-    * 使用 CGGMP24 协议的 3‑2 阈值签名方案，确保私钥从不集中存储。
+    * 使用 CGGMP21 协议的 2‑2 阈值签名方案，确保私钥从不集中存储。
 
     * 所有签名操作均在安全环境（手机端 Secure Storage、AWS Nitro Enclave）中执行。
 
@@ -117,7 +117,7 @@ sequenceDiagram
 
     %% 阶段 3：MPC签名（Sign Gateway 负责 gRPC + SSE 转发）
     rect rgb(240,240,240)
-        Note over AdminApp,SignService: MPC 阈值签名流程（3-2模式）
+        Note over AdminApp,SignService: MPC 阈值签名流程（2-2模式）
         AdminApp->>AdminApp: 生成唯一 tx_id<br/>(instance_id + counter)
         AdminApp->>AdminApp: 计算 room_id<br/>(room_id = "signing_" + tx_id)
         AdminApp->>LocalParticipant: 调用 sign() 接口<br/>(data, account_id)
@@ -650,7 +650,7 @@ master_seed → master_key → account_0, account_1, ... → child_keys
 
 1. **为每个 child key 生成 MPC shares**：
 
-    * 对每个派生的 child\_key，使用 CGGMP21 协议生成 3-2 阈值的 key shares（shareA、shareB、shareC）。
+    * 对每个派生的 child\_key，使用 CGGMP21 协议生成 2-2 阈值的 key shares（shareA、shareB）。
 
     * 生成 account\_id（可以是 BIP-32 路径的哈希或对应的地址）。
 
@@ -806,9 +806,7 @@ master_seed → master_key → account_0, account_1, ... → child_keys
 
     * shareA → 使用 App 端的 age 公钥加密后分发至管理员手机端；
 
-    * shareB → 使用 sign-service 的 age 公钥加密后分发至 MPC 服务端；
-
-    * shareC → 作为备用，保存在 Vault 或灾备节点。
+    * shareB → 使用 sign-service 的 age 公钥加密后分发至 MPC 服务端（Enclave）。
 
 ### 4.3.5 解密与存储
 
@@ -1332,4 +1330,4 @@ let signature = try await signer.sign(
 3. [Server-Sent Events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)
 4. [gRPC](https://grpc.io/)
 5. [age - a simple, secure, and modern encryption tool](https://age-encryption.org/)
-6. [CGGMP24 Protocol Specification](https://github.com/LFDT-Lockness/cggmp21)
+6. [CGGMP21 Protocol Specification](https://github.com/LFDT-Lockness/cggmp21)

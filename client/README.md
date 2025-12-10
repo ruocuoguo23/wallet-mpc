@@ -1,13 +1,13 @@
 # MPC Wallet Client
 
-MPC Wallet Client 是一个基于多方计算(MPC)的以太坊钱包客户端，它运行本地的participant server并与远程sign-gateway协作完成3-2门限签名。
+MPC Wallet Client 是一个基于多方计算(MPC)的以太坊钱包客户端，它运行本地的participant server并与远程sign-gateway协作完成2-2门限签名。
 
 ## 功能特性
 
 - **本地Participant服务器**: 运行自己的MPC participant，保护本地密钥分片
 - **远程协作**: 与sign-gateway和其他participants协作完成签名
 - **以太坊集成**: 支持以太坊交易的构造、签名和发送
-- **3-2门限签名**: 3个participants中任意2个即可完成签名
+- **2-2门限签名**: 2个participants都需要参与才能完成签名
 - **YAML配置**: 灵活的配置文件管理
 - **完整日志**: 详细的操作日志和错误追踪
 
@@ -48,7 +48,7 @@ ethereum:
 # MPC配置
 mpc:
   threshold: 2
-  total_participants: 3
+  total_participants: 2
 
 # 日志配置
 logging:

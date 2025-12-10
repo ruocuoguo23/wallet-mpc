@@ -25,7 +25,7 @@ ethereum:
 # MPC configuration
 mpc:
   threshold: 2
-  total_participants: 3
+  total_participants: 2
 
 # Logging configuration
 logging:

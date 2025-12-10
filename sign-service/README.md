@@ -33,7 +33,7 @@ logging:
 # MPC configuration
 mpc:
   threshold: 2
-  total_participants: 3
+  total_participants: 2
   key_share_file: "service_key_shares.json"
 ```
 

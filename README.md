@@ -2,11 +2,11 @@
 A Multi-Party Computation (MPC) wallet solution based on the CGGMP21 threshold signature scheme, designed for secure, decentralized cryptocurrency signing operations.
 
 ## Overview
-Wallet MPC implements a 3-of-2 threshold signature scheme, where any 2 out of 3 participants can collaboratively generate valid signatures without any single party having access to the complete private key. This architecture provides enhanced security for cryptocurrency wallets by eliminating single points of failure.
+Wallet MPC implements a 2-of-2 threshold signature scheme, where both participants must collaboratively generate valid signatures without any single party having access to the complete private key. This architecture provides enhanced security for cryptocurrency wallets by eliminating single points of failure.
 
 ### Key Features
-- **Threshold Signatures**: 3-of-2 MPC signing scheme using CGGMP21 protocol
-- **No Single Point of Failure**: Private keys are split across multiple parties
+- **Threshold Signatures**: 2-of-2 MPC signing scheme using CGGMP21 protocol
+- **No Single Point of Failure**: Private key is split across two parties
 - **Cross-Platform Client**: UniFFI-based library supporting iOS, Android, and more
 - **Real-time Communication**: SSE (Server-Sent Events) based message coordination
 - **Secp256k1 Support**: Compatible with Bitcoin, Ethereum, and other major blockchains
@@ -34,7 +34,7 @@ Wallet MPC implements a 3-of-2 threshold signature scheme, where any 2 out of 3 
 │ • UniFFI Lib    │    │ • Key Share Storage  │
 │ • Port: 50052   │    │ • Port: 50051        │
 └─────────────────┘    └─────────────────────┘
-         Any 2 participants can sign ✓
+         Both participants required to sign ✓
 ```
 
 ### Nitro Enclave Deployment (Production)
@@ -127,7 +127,7 @@ server:
   index: 0  # Participant index (0, 1, or 2)
 mpc:
   threshold: 2
-  total_participants: 3
+  total_participants: 2
   key_share_file: "service_key_shares.json"
 ```
 
@@ -188,7 +188,7 @@ cargo run --bin client
 **Location**: `key-gen/`
 Key generation utility for creating distributed key shares among participants.
 **Features**:
-- Generate 3-of-2 threshold key shares
+- Generate 2-of-2 threshold key shares
 - Support for multiple accounts
 - Secp256k1 curve
 - HD wallet key derivation
@@ -283,8 +283,8 @@ wallet-mpc/
 
 ### Key Share Distribution
 - Each participant holds ONE key share
-- Minimum 2 participants needed to sign (threshold)
-- Total 3 key shares generated
+- Both participants required to sign (2-of-2 threshold)
+- Total 2 key shares generated
 - No single participant can sign alone
 - No single point of compromise
 

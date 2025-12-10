@@ -11,7 +11,7 @@
 
 ## 功能特点
 
-- ✅ 从子密钥（child key）生成 threshold MPC 密钥分片（如 2-of-3）
+- ✅ 从子密钥（child key）生成 threshold MPC 密钥分片（默认 2-of-2）
 - ✅ 支持多个 account_id 的密钥分片存储
 - ✅ 支持追加模式，可以多次运行程序添加新账户
 - ✅ 每个参与方有独立的密钥分片文件
@@ -43,17 +43,16 @@ cargo run -- \
 |------|------|------|------|
 | `--child-key` | `-k` | ✅ | 子密钥（64位十六进制，32字节） |
 | `--account-id` | `-a` | ✅ | 账户ID（任意字符串，建议使用派生路径） |
-| `--n-parties` | `-n` | ❌ | 参与方数量（默认: 3） |
+| `--n-parties` | `-n` | ❌ | 参与方数量（默认: 2） |
 | `--threshold` | `-t` | ❌ | 签名阈值（默认: 2） |
 | `--output` | `-o` | ❌ | 输出文件前缀（默认: "key_shares"） |
 
 ## 输出文件
 
-程序会生成 N 个文件（N = 参与方数量）：
+程序会生成 N 个文件（N = 参与方数量，默认为 2）：
 
-- `key_shares_1.json` - 参与方 1 的密钥分片
-- `key_shares_2.json` - 参与方 2 的密钥分片
-- `key_shares_3.json` - 参与方 3 的密钥分片
+- `key_shares_1.json` - 参与方 1 的密钥分片（Client/Mobile App）
+- `key_shares_2.json` - 参与方 2 的密钥分片（Sign Service/Enclave）
 
 每个文件支持存储多个账户的密钥分片，格式如下：
 

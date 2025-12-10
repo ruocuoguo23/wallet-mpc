@@ -23,8 +23,8 @@ struct Args {
     #[arg(short, long)]
     account_id: String,
 
-    /// Number of participants (default: 3)
-    #[arg(short = 'n', long, default_value = "3")]
+    /// Number of participants (default: 2)
+    #[arg(short = 'n', long, default_value = "2")]
     n_parties: u16,
 
     /// Threshold for signing (default: 2)
@@ -32,7 +32,7 @@ struct Args {
     threshold: u16,
 
     /// Output file prefix (default: "key_shares")
-    /// Will generate {prefix}_1.json, {prefix}_2.json, {prefix}_3.json
+    /// Will generate {prefix}_1.json, {prefix}_2.json
     #[arg(short, long, default_value = "key_shares")]
     output: String,
 

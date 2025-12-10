@@ -16,7 +16,6 @@ brew install age
 # 为每个参与方生成密钥对
 age-keygen -o party1.key
 age-keygen -o party2.key
-age-keygen -o party3.key
 ```
 
 每个密钥文件将包含：
@@ -25,28 +24,26 @@ age-keygen -o party3.key
 
 ## 使用加密功能生成密钥分片
 
-### 基本用法（3方，2-of-3）
+### 基本用法（2方，2-of-2）
 
 ```bash
 # 提取公钥
 PUBKEY1=$(grep "public key:" party1.key | cut -d: -f2 | tr -d ' ')
 PUBKEY2=$(grep "public key:" party2.key | cut -d: -f2 | tr -d ' ')
-PUBKEY3=$(grep "public key:" party3.key | cut -d: -f2 | tr -d ' ')
 
 # 生成加密的密钥分片
 ./key-gen \
   --child-key "620fbd16fdb702ad02c43b9657c1acd0b399d8903e0f321b46ecd81bb69f59c0" \
   --account-id "account_1" \
-  --n-parties 3 \
+  --n-parties 2 \
   --threshold 2 \
   --output key_shares \
-  --pubkeys "age1pyxskzk50966hxtslha28qunkd6f0aw7am9624w4a7jnt3vvxg0sv532gs,age1cff4n2hgk7sdyjqfnd9nhql555pjf6928fg23gzmrg4exl7tgfpqgz83y5,age14998vlzlzvrre28s0xnqtf6mjvk7m847kpd78dsrgyn4vl8hnfaqudg77s"
+  --pubkeys "age1pyxskzk50966hxtslha28qunkd6f0aw7am9624w4a7jnt3vvxg0sv532gs,age1cff4n2hgk7sdyjqfnd9nhql555pjf6928fg23gzmrg4exl7tgfpqgz83y5"
 ```
 
 这将生成：
-- `key_shares_1.json.age` - 使用 party1 的公钥加密
-- `key_shares_2.json.age` - 使用 party2 的公钥加密
-- `key_shares_3.json.age` - 使用 party3 的公钥加密
+- `key_shares_1.json.age` - 使用 party1 的公钥加密（Client/Mobile App）
+- `key_shares_2.json.age` - 使用 party2 的公钥加密（Sign Service/Enclave）
 
 ### 不使用加密（默认行为）
 
@@ -56,7 +53,7 @@ PUBKEY3=$(grep "public key:" party3.key | cut -d: -f2 | tr -d ' ')
 ./key-gen \
   --child-key <64_hex_chars> \
   --account-id "account_1" \
-  --n-parties 3 \
+  --n-parties 2 \
   --threshold 2 \
   --output key_shares
 ```
