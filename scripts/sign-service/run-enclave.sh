@@ -5,8 +5,12 @@ EIF_PATH=${EIF_PATH:-target/sign-service.enclave.eif}
 ENCLAVE_NAME=${ENCLAVE_NAME:-sign-service-enclave}
 CPU_COUNT=${CPU_COUNT:-2}
 MEMORY_MIB=${MEMORY_MIB:-512}
+# Debug mode: set to 1 to enable debug mode (PCR0 will be all zeros, console available)
+# WARNING: Never use debug mode in production! KMS attestation requires real PCR0 values.
+DEBUG_MODE=${DEBUG_MODE:-0}
 CONSOLE_FILE=${CONSOLE_FILE:-target/sign-service-enclave-console.log}
-CONSOLE_STREAM_ENABLED=${CONSOLE_STREAM_ENABLED:-1}
+# Console streaming only works in debug mode
+CONSOLE_STREAM_ENABLED=${CONSOLE_STREAM_ENABLED:-${DEBUG_MODE}}
 HOST_GRPC_PORT=${HOST_GRPC_PORT:-50051}
 VSOCK_PORT=${VSOCK_PORT:-50051}
 SOCAT_BIN=${SOCAT_BIN:-socat}
@@ -234,17 +238,32 @@ fi
 
 start_kms_proxy
 
-nitro-cli run-enclave \
-    --eif-path "${EIF_PATH}" \
-    --cpu-count "${CPU_COUNT}" \
-    --memory "${MEMORY_MIB}" \
-    --enclave-cid "${ENCLAVE_CID}" \
-    --debug-mode \
+# Build nitro-cli run-enclave command
+ENCLAVE_RUN_ARGS=(
+    --eif-path "${EIF_PATH}"
+    --cpu-count "${CPU_COUNT}"
+    --memory "${MEMORY_MIB}"
+    --enclave-cid "${ENCLAVE_CID}"
     --enclave-name "${ENCLAVE_NAME}"
+)
+
+if [[ "${DEBUG_MODE}" == "1" ]]; then
+    echo "⚠️  WARNING: Running in DEBUG MODE. PCR0 will be all zeros!"
+    echo "⚠️  Do NOT use debug mode in production - KMS attestation will fail with real PCR0 policy."
+    ENCLAVE_RUN_ARGS+=(--debug-mode)
+fi
+
+nitro-cli run-enclave "${ENCLAVE_RUN_ARGS[@]}"
 
 start_console_stream() {
+    # Console is ONLY available in debug mode
+    if [[ "${DEBUG_MODE}" != "1" ]]; then
+        echo "Console not available in production mode (requires --debug-mode)."
+        return 0
+    fi
+
     if [[ "${CONSOLE_STREAM_ENABLED}" != "1" ]]; then
-        echo "Console streaming disabled. Run 'nitro-cli console --enclave-name ${ENCLAVE_NAME}' manually if needed."
+        echo "Console streaming disabled. Run 'nitro-cli console --enclave-name ${ENCLAVE_NAME}' manually."
         return 0
     fi
 
@@ -274,7 +293,19 @@ if [[ "${HOST_EGRESS_ENABLED}" == "1" ]]; then
     start_host_egress_bridge
 fi
 
+echo "✅ Enclave '${ENCLAVE_NAME}' is running."
+if [[ "${DEBUG_MODE}" == "1" ]]; then
+    echo "   Mode: DEBUG (PCR0 = all zeros)"
+else
+    echo "   Mode: PRODUCTION (KMS attestation enabled)"
+fi
+echo "   gRPC available at localhost:${HOST_GRPC_PORT}"
+
 if [[ -n "${CONSOLE_PID:-}" ]]; then
     echo "Console streaming active (PID ${CONSOLE_PID}). Press Ctrl+C to stop."
     wait "${CONSOLE_PID}" || true
+else
+    # In production mode, just wait indefinitely to keep bridges alive
+    echo "Press Ctrl+C to stop the enclave and bridges."
+    wait "${INGRESS_PID}" || true
 fi

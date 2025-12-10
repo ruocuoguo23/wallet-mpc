@@ -49,7 +49,7 @@ pub async fn run_services(config: SignServiceConfig) -> Result<()> {
 
     // Resolve key share file path (env var takes priority)
     let key_share_file = resolve_key_share_file(&config.mpc.key_share_file);
-
+    
     // Load key shares from the resolved file path
     let key_shares = load_key_shares(&key_share_file)
         .context("Failed to load key shares")?;
