@@ -39,7 +39,7 @@ AWS Nitro Enclave 提供基于硬件的加密证明（Cryptographic Attestation�
 # }
 ```
 
-**重要**：请保存 `PCR0` 值（96 字符的十六进制字符串），后续配置 KMS Key Policy 需要用到。
+**重要**：请保存 `PCR0`、`PCR1`、`PCR2` 值（每个都是 96 字符的十六进制字符串），后续配置 KMS Key Policy 需要用到。
 
 ---
 
@@ -55,6 +55,15 @@ AWS Nitro Enclave 提供基于硬件的加密证明（Cryptographic Attestation�
   "Id": "sign-service-enclave-key-policy",
   "Statement": [
     {
+      "Sid": "EnableRootAccountPermissions",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::ACCOUNT_ID:root"
+      },
+      "Action": "kms:*",
+      "Resource": "*"
+    },
+    {
       "Sid": "AllowEnclaveDecrypt",
       "Effect": "Allow",
       "Principal": {
@@ -64,7 +73,9 @@ AWS Nitro Enclave 提供基于硬件的加密证明（Cryptographic Attestation�
       "Resource": "*",
       "Condition": {
         "StringEqualsIgnoreCase": {
-          "kms:RecipientAttestation:ImageSha384": "YOUR_PCR0_VALUE_HERE"
+          "kms:RecipientAttestation:ImageSha384": "YOUR_PCR0_VALUE_HERE",
+          "kms:RecipientAttestation:PCR1": "YOUR_PCR1_VALUE_HERE",
+          "kms:RecipientAttestation:PCR2": "YOUR_PCR2_VALUE_HERE"
         }
       }
     },
@@ -131,7 +142,11 @@ AWS Nitro Enclave 提供基于硬件的加密证明（Cryptographic Attestation�
 | `NitroEnclaveInstanceRole` | EC2 实例的 IAM Role 名称 |
 | `KeyManagementRole` | 用于加密数据的管理角色 |
 | `KMSAdminRole` | KMS 密钥管理员角色 |
-| `YOUR_PCR0_VALUE_HERE` | 构建 EIF 时获取的 PCR0 值 |
+| `YOUR_PCR0_VALUE_HERE` | 构建 EIF 时获取的 PCR0 值（Enclave 镜像哈希） |
+| `YOUR_PCR1_VALUE_HERE` | 构建 EIF 时获取的 PCR1 值（内核和引导 ramdisk 哈希） |
+| `YOUR_PCR2_VALUE_HERE` | 构建 EIF 时获取的 PCR2 值（用户空间应用哈希） |
+
+> **安全说明**：同时验证 PCR0、PCR1、PCR2 提供了最强的安全保证，确保整个 Enclave 镜像（内核、引导组件、应用程序）都未被篡改。
 
 ---
 
@@ -240,9 +255,9 @@ EC2 实例角色需要以下权限：
 
 ## 调试模式 (Debug Mode)
 
-### 测试阶段使用全零 PCR0
+### 测试阶段使用全零 PCR 值
 
-在 debug 模式下运行 Enclave 时，PCR0 固定为全零。可以临时配置 Key Policy 允许调试：
+在 debug 模式下运行 Enclave 时，**所有 PCR 值都固定为全零**。可以临时配置 Key Policy 允许调试：
 
 ```json
 {
@@ -255,7 +270,9 @@ EC2 实例角色需要以下权限：
   "Resource": "*",
   "Condition": {
     "StringEqualsIgnoreCase": {
-      "kms:RecipientAttestation:ImageSha384": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      "kms:RecipientAttestation:ImageSha384": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "kms:RecipientAttestation:PCR1": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "kms:RecipientAttestation:PCR2": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     }
   }
 }
@@ -264,23 +281,22 @@ EC2 实例角色需要以下权限：
 ### 启动 Debug Enclave
 
 ```bash
-nitro-cli run-enclave \
-    --eif-path sign-service.eif \
-    --enclave-cid 16 \
-    --memory 512 \
-    --cpu-count 2 \
-    --debug-mode
+# 使用环境变量启动 debug 模式（仅限开发测试）
+DEBUG_MODE=1 ./scripts/sign-service/run-enclave.sh
 ```
 
-⚠️ **警告**：生产环境必须移除 debug 条件，使用实际的 PCR0 值！
+⚠️ **警告**：
+- Debug 模式下所有 PCR 值为全零，安全性大幅降低
+- 生产环境**必须**移除 debug 条件，使用实际的 PCR0/PCR1/PCR2 值
+- 生产环境启动时不要设置 `DEBUG_MODE=1`
 
 ---
 
 ## 增强安全配置（可选）
 
-### 同时验证 PCR0 和 PCR3
+### 添加 PCR3 验证 IAM Role
 
-添加 PCR3 可以确保只有特定 IAM Role 的实例才能解密：
+在已有 PCR0/PCR1/PCR2 的基础上，添加 PCR3 可以确保只有特定 IAM Role 的实例才能解密：
 
 ```json
 {
@@ -294,6 +310,8 @@ nitro-cli run-enclave \
   "Condition": {
     "StringEqualsIgnoreCase": {
       "kms:RecipientAttestation:ImageSha384": "YOUR_PCR0_VALUE",
+      "kms:RecipientAttestation:PCR1": "YOUR_PCR1_VALUE",
+      "kms:RecipientAttestation:PCR2": "YOUR_PCR2_VALUE",
       "kms:RecipientAttestation:PCR3": "YOUR_PCR3_VALUE"
     }
   }
@@ -316,7 +334,7 @@ echo -n "arn:aws:iam::123456789012:role/NitroEnclaveInstanceRole" | sha384sum
 
 ## 支持多个 Enclave 版本
 
-如果需要支持多个 EIF 版本（如蓝绿部署），可以使用多个条件：
+如果需要支持多个 EIF 版本（如蓝绿部署），可以为每个 PCR 指定多个允许值：
 
 ```json
 {
@@ -332,17 +350,27 @@ echo -n "arn:aws:iam::123456789012:role/NitroEnclaveInstanceRole" | sha384sum
       "kms:RecipientAttestation:ImageSha384": [
         "PCR0_VALUE_VERSION_1",
         "PCR0_VALUE_VERSION_2"
+      ],
+      "kms:RecipientAttestation:PCR1": [
+        "PCR1_VALUE_VERSION_1",
+        "PCR1_VALUE_VERSION_2"
+      ],
+      "kms:RecipientAttestation:PCR2": [
+        "PCR2_VALUE_VERSION_1",
+        "PCR2_VALUE_VERSION_2"
       ]
     }
   }
 }
 ```
 
+> **注意**：多值条件是 OR 逻辑（每个 PCR 只需匹配列表中的某一个值）。但不同 PCR 之间是 AND 逻辑。请确保各版本的 PCR 值正确对应。
+
 ---
 
 ## 更新 KMS Key Policy
 
-当重新构建 EIF 后，PCR0 会改变，需要更新 Key Policy：
+当重新构建 EIF 后，PCR 值会改变，需要更新 Key Policy：
 
 ```bash
 # 1. 获取当前策略
@@ -351,7 +379,7 @@ aws kms get-key-policy \
     --policy-name default \
     --output text > current-policy.json
 
-# 2. 编辑策略，更新 PCR0 值
+# 2. 编辑策略，更新 PCR0/PCR1/PCR2 值
 vim current-policy.json
 
 # 3. 应用新策略
@@ -368,13 +396,13 @@ aws kms put-key-policy \
 
 ### 错误：AccessDeniedException
 
-**原因**：PCR0 值不匹配或 attestation document 无效。
+**原因**：PCR 值不匹配或 attestation document 无效。
 
 **检查步骤**：
 
-1. 确认 EIF 未重新构建（重新构建会改变 PCR0）
-2. 确认 Key Policy 中的 PCR0 值正确
-3. 确认不是 debug 模式（debug 模式 PCR0 = 全零）
+1. 确认 EIF 未重新构建（重新构建会改变 PCR0/PCR1/PCR2）
+2. 确认 Key Policy 中的 PCR0/PCR1/PCR2 值正确
+3. 确认不是 debug 模式（debug 模式所有 PCR = 全零）
 
 ### 错误：KMS proxy connection failed
 

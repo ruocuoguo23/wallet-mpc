@@ -14,8 +14,9 @@ REPO_ROOT=$(cd "${SCRIPT_DIR}/../../" && pwd)
 cd "${REPO_ROOT}"
 
 if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    echo "Container ${CONTAINER_NAME} already exists. Remove it or pick a different CONTAINER_NAME." >&2
-    exit 1
+    echo "Container ${CONTAINER_NAME} already exists. Removing..."
+    docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1
+    echo "Container ${CONTAINER_NAME} removed."
 fi
 
 if [[ ! -f "${HOST_CONFIG_PATH}" ]]; then
