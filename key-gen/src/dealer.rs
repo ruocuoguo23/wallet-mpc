@@ -12,6 +12,11 @@ use std::fs;
 use std::path::Path;
 use std::io::Write;
 use age::Encryptor;
+use chrono::Local;
+
+fn timestamp() -> String {
+    Local::now().format("[%Y-%m-%d %H:%M:%S%.3f]").to_string()
+}
 
 /// Configuration for key share generation
 #[derive(Debug, Clone)]
@@ -67,8 +72,8 @@ impl KeyShareDealer {
 
     /// Generate key shares from the child key
     pub fn generate_shares(&mut self) -> Result<()> {
-        println!("\n🔐 Generating {}-of-{} MPC key shares...",
-                 self.config.threshold, self.config.n_parties);
+        println!("\n{} 🔐 Generating {}-of-{} MPC key shares...",
+                 timestamp(), self.config.threshold, self.config.n_parties);
 
         // Convert key bytes to scalar
         let secret_scalar = self.create_scalar_from_bytes(&self.config.child_key)?;
@@ -80,7 +85,7 @@ impl KeyShareDealer {
             .hd_wallet(true)  // Enable HD wallet support
             .generate_shares(&mut OsRng)?;
 
-        println!("   ✓ Generated {} key shares", key_shares.len());
+        println!("{}    ✓ Generated {} key shares", timestamp(), key_shares.len());
 
         self.key_shares = Some(key_shares);
         Ok(())
@@ -91,23 +96,23 @@ impl KeyShareDealer {
         let key_shares = self.key_shares.as_ref()
             .ok_or_else(|| anyhow!("Key shares not generated yet. Call generate_shares() first"))?;
 
-        println!("\n🔍 Public Key Verification:");
+        println!("\n{} 🔍 Public Key Verification:", timestamp());
 
         // Compute expected public key from the input child key
         let scalar_for_pubkey = Scalar::<Secp256k1>::from_be_bytes_mod_order(&self.config.child_key);
         let expected_pubkey: Point<Secp256k1> = Point::generator() * &scalar_for_pubkey;
         let expected_pubkey_hex = hex::encode(expected_pubkey.to_bytes(true));
 
-        println!("   Expected public key (from input):  {}", expected_pubkey_hex);
+        println!("{}    Expected public key (from input):  {}", timestamp(), expected_pubkey_hex);
 
         // Display shared public key
         let shared_pubkey = &key_shares[0].core.shared_public_key;
         let shared_pubkey_hex = hex::encode(shared_pubkey.to_bytes(true));
-        println!("   MPC shared public key (generated): {}", shared_pubkey_hex);
+        println!("{}    MPC shared public key (generated): {}", timestamp(), shared_pubkey_hex);
 
         // Verify they match
         if expected_pubkey_hex == shared_pubkey_hex {
-            println!("   ✅ MATCH: MPC key shares generated correctly!");
+            println!("{}    ✅ MATCH: MPC key shares generated correctly!", timestamp());
             Ok(())
         } else {
             Err(anyhow!("❌ MISMATCH: Public keys don't match! Key generation may have failed."))
@@ -119,7 +124,7 @@ impl KeyShareDealer {
         let key_shares = self.key_shares.as_ref()
             .ok_or_else(|| anyhow!("Key shares not generated yet. Call generate_shares() first"))?;
 
-        println!("\n💾 Saving key shares to files...");
+        println!("\n{} 💾 Saving key shares to files...", timestamp());
 
         for (i, key_share) in key_shares.iter().enumerate() {
             let base_filename = format!("{}_{}.json", self.config.output_prefix, i + 1);
@@ -133,16 +138,16 @@ impl KeyShareDealer {
             } else {
                 // No existing file
                 if self.config.pubkeys.is_some() {
-                    println!("   • Creating new encrypted file: {}", encrypted_filename);
+                    println!("{}    • Creating new encrypted file: {}", timestamp(), encrypted_filename);
                 } else {
-                    println!("   • Creating new file: {}", base_filename);
+                    println!("{}    • Creating new file: {}", timestamp(), base_filename);
                 }
                 (&base_filename, false) // dummy, won't be used
             };
 
             // Load existing data if file exists
             let mut all_accounts: HashMap<String, serde_json::Value> = if Path::new(existing_filename).exists() {
-                println!("   • Loading existing file: {}", existing_filename);
+                println!("{}    • Loading existing file: {}", timestamp(), existing_filename);
                 let content = if existing_encrypted {
                     // Decrypt existing file
                     return Err(anyhow!("Cannot append to encrypted file. Decryption for appending is not yet supported. Please decrypt manually first."));
@@ -159,8 +164,8 @@ impl KeyShareDealer {
 
             // Check if account_id already exists
             if all_accounts.contains_key(&self.config.account_id) {
-                println!("   ⚠️  Account '{}' already exists, will overwrite",
-                         self.config.account_id);
+                println!("{}    ⚠️  Account '{}' already exists, will overwrite",
+                         timestamp(), self.config.account_id);
             }
 
             // Serialize the key share for this account
@@ -181,12 +186,12 @@ impl KeyShareDealer {
                 let output_filename = encrypted_filename;
 
                 self.write_encrypted_file(&json, pubkey_str, &output_filename)?;
-                println!("   ✓ Saved to {} (encrypted): {} account(s)", output_filename, all_accounts.len());
+                println!("{}    ✓ Saved to {} (encrypted): {} account(s)", timestamp(), output_filename, all_accounts.len());
             } else {
                 // Write plain JSON
                 fs::write(&base_filename, json)
                     .with_context(|| format!("Failed to write file: {}", base_filename))?;
-                println!("   ✓ Saved to {}: {} account(s)", base_filename, all_accounts.len());
+                println!("{}    ✓ Saved to {}: {} account(s)", timestamp(), base_filename, all_accounts.len());
             }
         }
 

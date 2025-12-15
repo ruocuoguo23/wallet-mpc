@@ -16,3 +16,4 @@ anyhow = { workspace = true }
 hex = "0.4"
 clap = { version = "4.5", features = ["derive"] }
 age = "0.10"
+chrono = "0.4"

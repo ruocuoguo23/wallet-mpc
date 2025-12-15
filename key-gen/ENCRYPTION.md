@@ -32,7 +32,7 @@ PUBKEY1=$(grep "public key:" party1.key | cut -d: -f2 | tr -d ' ')
 PUBKEY2=$(grep "public key:" party2.key | cut -d: -f2 | tr -d ' ')
 
 # 生成加密的密钥分片
-./key-gen \
+./bin/key-gen \
   --child-key "620fbd16fdb702ad02c43b9657c1acd0b399d8903e0f321b46ecd81bb69f59c0" \
   --account-id "account_1" \
   --n-parties 2 \
