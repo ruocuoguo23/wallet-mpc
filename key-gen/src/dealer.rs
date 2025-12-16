@@ -5,7 +5,6 @@ use cggmp21::{
     trusted_dealer,
 };
 use generic_ec::{NonZero, SecretScalar, Point, Scalar};
-use rand::rngs::OsRng;
 use anyhow::{Result, Context, anyhow};
 use std::collections::HashMap;
 use std::fs;
@@ -82,8 +81,8 @@ impl KeyShareDealer {
         let key_shares = trusted_dealer::builder::<Secp256k1, SecurityLevel128>(self.config.n_parties)
             .set_threshold(Some(self.config.threshold))
             .set_shared_secret_key(secret_scalar)
-            .hd_wallet(true)  // Enable HD wallet support
-            .generate_shares(&mut OsRng)?;
+            // .hd_wallet(true)  // Enable HD wallet support
+            .generate_shares(&mut rand::thread_rng())?;
 
         println!("{}    ✓ Generated {} key shares", timestamp(), key_shares.len());
 

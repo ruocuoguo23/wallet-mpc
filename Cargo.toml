@@ -8,11 +8,13 @@ members = [
     "proto",
     "sse",
     "key-gen",
+    "vendor/fast-paillier",
 ]
 resolver = "2"
 
 [patch.crates-io]
 gmp-mpfr-sys = { path = "./vendor/gmp-mpfr-sys" }
+fast-paillier = { path = "./vendor/fast-paillier" }
 
 [workspace.package]
 version = "0.1.0"

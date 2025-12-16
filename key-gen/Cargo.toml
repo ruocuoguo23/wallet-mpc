@@ -8,7 +8,7 @@ name = "key-gen"
 path = "src/main.rs"
 
 [dependencies]
-cggmp21 = { version = "0.6.2", features = ["all-curves", "hd-wallet", "hd-slip10", "spof"] }
+cggmp21 = { version = "0.6.3", features = ["all-curves", "hd-wallet", "hd-slip10", "spof"] }
 generic-ec = "0.4"
 rand = "0.8"
 serde_json = { workspace = true }
@@ -17,3 +17,10 @@ hex = "0.4"
 clap = { version = "4.5", features = ["derive"] }
 age = "0.10"
 chrono = "0.4"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "dealer_generate_shares"
+harness = false
