@@ -15,6 +15,8 @@ Wallet MPC implements a 2-of-2 threshold signature scheme, where both participan
 
 ## Architecture
 
+For the implementation-level component boundaries, signing sequence, key lifecycle, deployment model, and current constraints, see [ARCHITECTURE.md](./ARCHITECTURE.md).
+
 ### Standard Deployment
 ```
 ┌────────────────────────────────────────────────────────────────┐
